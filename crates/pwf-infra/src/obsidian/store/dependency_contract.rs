@@ -15,6 +15,7 @@ use crate::{database, obsidian::identity::task_directory_scan_count};
 struct Fixture {
     directory: tempfile::TempDir,
     pool: sqlx::SqlitePool,
+    projects: crate::project_store::SqliteProjectStore,
     store: ObsidianStore,
 }
 
@@ -37,6 +38,7 @@ impl Fixture {
             ObsidianStore::with_watched_tasks(HomeDirectory::new(directory.path().to_path_buf()));
         let fixture = Self {
             directory,
+            projects: crate::project_store::SqliteProjectStore::new(pool.clone()),
             pool,
             store,
         };
@@ -90,7 +92,7 @@ async fn dependency_gather_scans_each_reached_project_once_and_returns_only_reac
                 blockers: &blockers,
             },
             &fixture.store,
-            &fixture.pool,
+            &fixture.projects,
         )
         .await
         .unwrap();
@@ -113,7 +115,7 @@ async fn graph_modes_scan_each_required_project_once_including_the_root() {
         ] {
             let before = task_directory_scan_count();
             let graph =
-                get_task_dag::execute(&Fixture::query(id, mode), &fixture.store, &fixture.pool)
+                get_task_dag::execute(&Fixture::query(id, mode), &fixture.store, &fixture.projects)
                     .await
                     .unwrap();
             assert_eq!(task_directory_scan_count() - before, scans);
@@ -134,9 +136,10 @@ async fn graph_modes_reuse_cached_projects_across_requests() {
         (TaskDagMode::BlockedBy, "FOO-0003", 0),
     ] {
         let before = task_directory_scan_count();
-        let graph = get_task_dag::execute(&Fixture::query(id, mode), &fixture.store, &fixture.pool)
-            .await
-            .unwrap();
+        let graph =
+            get_task_dag::execute(&Fixture::query(id, mode), &fixture.store, &fixture.projects)
+                .await
+                .unwrap();
         assert_eq!(task_directory_scan_count() - before, scans);
         assert_eq!(graph.nodes().len(), 4);
         assert_eq!(graph.edges().len(), 4);
@@ -156,7 +159,7 @@ async fn list_and_small_graph_share_the_same_1024_task_snapshot() {
             "FOO".parse::<pwf_models::project::ProjectId>().unwrap(),
             pwf_wire::project::ProjectStatusFilter::IncludingPaused,
         ),
-        &fixture.pool,
+        &fixture.projects,
     )
     .await
     .unwrap();
@@ -172,7 +175,7 @@ async fn list_and_small_graph_share_the_same_1024_task_snapshot() {
         let graph = get_task_dag::execute(
             &Fixture::query("FOO-0003", TaskDagMode::BlockedBy),
             &fixture.store,
-            &fixture.pool,
+            &fixture.projects,
         )
         .await
         .unwrap();
@@ -200,7 +203,7 @@ async fn list_and_small_graph_share_the_same_1024_task_snapshot() {
 async fn external_edges_refresh_graph_cache_while_mutation_reads_are_immediate() {
     let fixture = Fixture::new().await;
     let query = Fixture::query("FOO-0003", TaskDagMode::BlockedBy);
-    let first = get_task_dag::execute(&query, &fixture.store, &fixture.pool)
+    let first = get_task_dag::execute(&query, &fixture.store, &fixture.projects)
         .await
         .unwrap();
     assert_eq!(first.nodes().len(), 4);
@@ -213,13 +216,13 @@ async fn external_edges_refresh_graph_cache_while_mutation_reads_are_immediate()
             blockers: &blockers,
         },
         &fixture.store,
-        &fixture.pool,
+        &fixture.projects,
     )
     .await
     .unwrap();
     assert_eq!(records.len(), 1);
     let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while get_task_dag::execute(&query, &fixture.store, &fixture.pool)
+        while get_task_dag::execute(&query, &fixture.store, &fixture.projects)
             .await
             .unwrap()
             .nodes()
@@ -243,7 +246,7 @@ async fn graph_field_errors_apply_to_the_root_reached_task_or_reverse_scan() {
     fixture.write("FOO-0098", "status: invalid\n");
     let query = Fixture::query("FOO-0003", TaskDagMode::BlockedBy);
     assert!(
-        get_task_dag::execute(&query, &fixture.store, &fixture.pool)
+        get_task_dag::execute(&query, &fixture.store, &fixture.projects)
             .await
             .is_ok()
     );
@@ -251,7 +254,7 @@ async fn graph_field_errors_apply_to_the_root_reached_task_or_reverse_scan() {
     fixture
         .store
         .invalidate_task_index(&fixture.directory.path().join("FOO"));
-    let graph = get_task_dag::execute(&query, &fixture.store, &fixture.pool)
+    let graph = get_task_dag::execute(&query, &fixture.store, &fixture.projects)
         .await
         .unwrap();
     assert!(
@@ -262,7 +265,7 @@ async fn graph_field_errors_apply_to_the_root_reached_task_or_reverse_scan() {
     let error = get_task_dag::execute(
         &Fixture::query("FOO-0002", TaskDagMode::BlockedBy),
         &fixture.store,
-        &fixture.pool,
+        &fixture.projects,
     )
     .await
     .unwrap_err();
@@ -270,7 +273,7 @@ async fn graph_field_errors_apply_to_the_root_reached_task_or_reverse_scan() {
     let error = get_task_dag::execute(
         &Fixture::query("FOO-0003", TaskDagMode::Full),
         &fixture.store,
-        &fixture.pool,
+        &fixture.projects,
     )
     .await
     .unwrap_err();
@@ -288,7 +291,7 @@ async fn graph_ignores_cached_summary_errors_and_retains_graph_errors_by_identit
             "FOO".parse::<pwf_models::project::ProjectId>().unwrap(),
             pwf_wire::project::ProjectStatusFilter::IncludingPaused,
         ),
-        &fixture.pool,
+        &fixture.projects,
     )
     .await
     .unwrap();
@@ -311,7 +314,7 @@ async fn snapshots_reject_duplicate_frontmatter_identity() {
             pwf_models::project::ProjectId::try_new("FOO").unwrap(),
             pwf_wire::project::ProjectStatusFilter::IncludingPaused,
         ),
-        &fixture.pool,
+        &fixture.projects,
     )
     .await
     .unwrap();

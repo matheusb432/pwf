@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE projects SET last_task_number = last_task_number + 1\n        WHERE id = ? AND last_task_number < 9999\n        RETURNING last_task_number AS \"number!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "number!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "last_task_number"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "3ae1dd9487f01d415c408ed83798a1d88b5160c009c161e65c27086a8ce3177d"
+}

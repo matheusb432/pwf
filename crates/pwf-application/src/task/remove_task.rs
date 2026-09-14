@@ -18,6 +18,7 @@ use super::{
 use crate::{
     ports::{
         confirmation::{ConfirmationClient, ConfirmationClientError},
+        project_store::ProjectStore,
         task_vault::{ExpectedTaskRevision, TaskMutationError, TaskVault, TaskWrite},
     },
     project::list_projects,
@@ -69,17 +70,17 @@ pub enum RemoveTaskError {
 pub async fn execute(
     command: &DeleteTask,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
 ) -> Result<TaskMutationResult<DeleteTaskOutcome>, RemoveTaskError> {
-    let prepared = prepare_removal(&command.id, store, pool).await?;
+    let prepared = prepare_removal(&command.id, store, project_store).await?;
     if !confirmation_client.confirm(&prepared.confirmation).await? {
         return Ok(TaskMutationResult {
             outcome: DeleteTaskOutcome::Aborted,
             task: None,
         });
     }
-    validate_removal(&prepared, store, pool).await?;
+    validate_removal(&prepared, store, project_store).await?;
     let summary = TaskMutationSummary {
         id: prepared.task_id.clone(),
         title: prepared.confirmation.title.to_string(),
@@ -101,9 +102,9 @@ struct PreparedRemoval {
 async fn prepare_removal(
     task_id: &TaskId,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<PreparedRemoval, RemoveTaskError> {
-    let project = resolve_task_project::execute(task_id.clone(), pool).await?;
+    let project = resolve_task_project::execute(task_id.clone(), project_store).await?;
     let record = TaskVault::get_task_record(store, &project, task_id)
         .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| RemoveTaskError::TaskNotFound {
@@ -115,7 +116,7 @@ async fn prepare_removal(
             source,
         }
     })?;
-    ensure_no_dependents(task_id, store, pool).await?;
+    ensure_no_dependents(task_id, store, project_store).await?;
     let deletion = store
         .task_deletion(&project)
         .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
@@ -138,16 +139,16 @@ async fn prepare_removal(
 async fn validate_removal(
     prepared: &PreparedRemoval,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<(), RemoveTaskError> {
-    let project = resolve_task_project::execute(prepared.task_id.clone(), pool).await?;
+    let project = resolve_task_project::execute(prepared.task_id.clone(), project_store).await?;
     if project.obsidian_vault != prepared.project.obsidian_vault {
         return Err(RemoveTaskError::DeletionChanged);
     }
     store
         .task_deletion(&project)
         .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
-    ensure_no_dependents(&prepared.task_id, store, pool).await?;
+    ensure_no_dependents(&prepared.task_id, store, project_store).await?;
     validate_target_revision(prepared, store)
 }
 
@@ -186,9 +187,9 @@ fn delete_prepared(
 async fn ensure_no_dependents(
     task_id: &TaskId,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<(), RemoveTaskError> {
-    let dependents = find_dependents(task_id, store, pool).await?;
+    let dependents = find_dependents(task_id, store, project_store).await?;
     if !dependents.is_empty() {
         return Err(RemoveTaskError::HasDependents {
             target: task_id.clone(),
@@ -201,9 +202,9 @@ async fn ensure_no_dependents(
 async fn find_dependents(
     target: &TaskId,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<Vec<TaskId>, RemoveTaskError> {
-    let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
+    let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, project_store)
         .await
         .map_err(|error| RemoveTaskError::ReadDependents(anyhow::Error::new(error)))?;
     let mut dependents = Vec::new();

@@ -11,8 +11,8 @@ pub mod edit_task;
 pub mod get_task;
 pub mod get_task_dag;
 pub mod get_task_record;
-mod lane_configuration;
 pub mod list_tasks;
+mod marker_sections;
 pub mod read_task_dependencies;
 pub mod remove_task;
 pub mod resolve_task_project;
@@ -20,25 +20,25 @@ pub mod session;
 mod task_closure;
 mod task_projection;
 
-pub use lane_configuration::TaskPromptLanesError;
+pub use marker_sections::{TaskMarkerSectionRow, TaskMarkerSections, TaskMarkerSectionsError};
 pub use task_closure::CloseTaskError;
 
-/// Reports a shorthand prompt without a usable leading task title.
+/// Reports a shorthand body without a usable leading task title.
 #[derive(Debug, thiserror::Error)]
-pub enum TaskPromptTitleError {
-    #[error("--prompt must start with a nonempty title before any lane marker.")]
+pub enum TaskBodyTitleError {
+    #[error("--body must start with a nonempty title before any section marker.")]
     Missing,
     #[error(transparent)]
     Invalid(#[from] pwf_models::task::TaskTitleError),
 }
 
 fn infer_task_title(
-    prompt: &str,
-    lanes: &lane_configuration::TaskPromptLanes,
-) -> Result<pwf_models::task::TaskTitle, TaskPromptTitleError> {
-    let (title, _) = lanes.parse(prompt).into_parts();
+    body: &str,
+    sections: &marker_sections::TaskMarkerSections,
+) -> Result<pwf_models::task::TaskTitle, TaskBodyTitleError> {
+    let (title, _) = sections.parse(body).into_parts();
     if title.is_empty() {
-        return Err(TaskPromptTitleError::Missing);
+        return Err(TaskBodyTitleError::Missing);
     }
     pwf_models::task::TaskTitle::try_new(title).map_err(Into::into)
 }

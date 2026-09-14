@@ -1,56 +1,52 @@
 use clap::Args;
 use pwf_client::{
-    pb::{CreateTaskRequest, EffortTier, PriorityTier, StructuredTaskPrompt, create_task_request},
+    pb::{CreateTaskRequest, EffortTier, PriorityTier, StructuredTaskBody, create_task_request},
     task::TaskClient,
 };
 use pwf_models::{
-    project::ProjectSelector,
+    project::ProjectId,
     settings::TaskStatusColors,
     task::{TagInput, TaskTags},
 };
 
 use super::{
-    EffortChoice, LaneFlagMode, PriorityChoice,
+    EffortChoice, MarkerSectionFlagMode, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
     render::{TITLE_NORMALIZED_NOTICE, TaskMutationAction, render_mutation},
-    task_lanes, task_title,
+    task_marker_sections, task_title,
 };
 use crate::console::Console;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
-    /// Project's name or id
-    #[arg(value_name = "PROJECT")]
-    pub(crate) project: ProjectSelector,
-    /// Task's prompt's shorthand, using lanes. Conflicts with section-specific args.
-    #[arg(value_name = "PROMPT")]
-    pub(crate) prompt: Vec<String>,
+    /// Managed project ID (two to four ASCII letters)
+    #[arg(value_name = "PROJECT", value_parser = crate::project::parse_project_id)]
+    pub(crate) project: ProjectId,
+    /// Task body shorthand. Conflicts with marker-section-specific args.
+    #[arg(value_name = "BODY")]
+    pub(crate) body: Vec<String>,
     #[command(flatten)]
-    structured: StructuredPrompt,
+    structured: StructuredBody,
     /// Blocked-by task ID or [[ID]]; repeat or comma-separate for several
-    #[arg(long)]
+    #[arg(short = 'b', long)]
     pub(crate) blocked_by: Vec<BlockedByInput>,
     /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
     /// kebab-case
-    #[arg(long, allow_hyphen_values = true)]
+    #[arg(short = 't', long, allow_hyphen_values = true)]
     pub(crate) tag: Vec<TagInput>,
     /// Effort/complexity tier.
-    #[arg(long, value_enum)]
+    #[arg(short = 'e', long, value_enum)]
     pub(crate) effort: Option<EffortChoice>,
     /// Scheduling priority tier.
-    #[arg(long, value_enum)]
+    #[arg(short = 'p', long, value_enum)]
     pub(crate) priority: Option<PriorityChoice>,
 }
 
 #[derive(Args, Debug)]
-#[group(
-    id = "structured_prompt",
-    conflicts_with = "prompt",
-    requires = "title"
-)]
-struct StructuredPrompt {
+#[group(id = "structured_body", conflicts_with = "body", requires = "title")]
+struct StructuredBody {
     /// Task's title
-    #[arg(long, required_unless_present = "prompt")]
+    #[arg(long, required_unless_present = "body")]
     pub(crate) title: Option<String>,
     /// Goal. repeat for several. Requires `--title`
     #[arg(long)]
@@ -72,13 +68,13 @@ pub(super) async fn run(
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
-) -> anyhow::Result<String> {
-    let (prompt, title_normalized) = request_prompt(arguments)?;
+) -> Result<String, crate::error::Error> {
+    let (body, title_normalized) = request_body(arguments)?;
     let project_id = crate::project::resolve_project_id(&arguments.project, projects).await?;
     let result = client
         .create_task(CreateTaskRequest {
             project_id: project_id.to_string(),
-            prompt: Some(prompt),
+            body: Some(body),
             blocked_by: blocked_by_input::collect(&arguments.blocked_by)
                 .map(|values| values.iter().map(ToString::to_string).collect())
                 .unwrap_or_default(),
@@ -111,35 +107,36 @@ pub(super) async fn run(
                 task_status_colors,
                 console.color(),
             )
+            .map_err(Into::into)
         }
-        Err(error) => Err(crate::rpc_error(error)),
+        Err(error) => Err(error.into()),
     }
 }
 
-fn request_prompt(arguments: &Arguments) -> anyhow::Result<(create_task_request::Prompt, bool)> {
+fn request_body(arguments: &Arguments) -> anyhow::Result<(create_task_request::Body, bool)> {
     if let Some(title) = arguments.structured.title.as_deref() {
         let (title, normalized) = task_title(title)?;
-        let lanes = task_lanes(
+        let sections = task_marker_sections(
             &arguments.structured.goal,
             &arguments.structured.context,
             &arguments.structured.constraint,
             &arguments.structured.done_when,
-            LaneFlagMode::Add,
+            MarkerSectionFlagMode::Add,
         )?;
         return Ok((
-            create_task_request::Prompt::Structured(StructuredTaskPrompt {
+            create_task_request::Body::Structured(StructuredTaskBody {
                 title: title.to_string(),
-                lanes: Some(lanes),
+                sections: Some(sections),
             }),
             normalized,
         ));
     }
 
-    let prompt = arguments.prompt.join(" ");
-    if prompt.trim().is_empty() {
+    let body = arguments.body.join(" ");
+    if body.trim().is_empty() {
         return Err(anyhow::anyhow!(
-            "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
+            "Use shorthand: pwf task add <project> \"<body>\"\nOr machine mode: pwf task add <project> --title <title> [marker-section flags]"
         ));
     }
-    Ok((create_task_request::Prompt::Shorthand(prompt), false))
+    Ok((create_task_request::Body::Shorthand(body), false))
 }

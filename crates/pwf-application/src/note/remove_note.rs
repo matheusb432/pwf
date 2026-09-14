@@ -1,5 +1,4 @@
 //! Removes one note from a managed project.
-
 use pwf_models::{
     note::NoteSelector,
     project::{ProjectId, ProjectName},
@@ -13,6 +12,7 @@ use crate::{
     ports::{
         confirmation::{ConfirmationClient, ConfirmationClientError},
         project_note::ProjectNotes,
+        project_store::ProjectStore,
     },
     project::{get_active_project, get_project::GetProjectError},
 };
@@ -42,10 +42,10 @@ pub enum RemoveNoteError {
 pub async fn execute(
     command: RemoveNote,
     store: &impl ProjectNotes,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveNoteConfirmation>,
 ) -> Result<RemovedNoteOutcome, RemoveNoteError> {
-    let project = get_active_project::execute(command.project_id, pool).await?;
+    let project = get_active_project::execute(command.project_id, project_store).await?;
     let id =
         command
             .selector

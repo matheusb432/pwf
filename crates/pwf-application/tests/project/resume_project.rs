@@ -21,9 +21,13 @@ async fn runtime_alias_of_other_paused_project_is_rejected(pool: sqlx::SqlitePoo
     )
     .await;
 
-    let error = resume_project::execute(ProjectId::try_new("FOO").unwrap(), &pool, &home)
-        .await
-        .unwrap_err();
+    let error = resume_project::execute(
+        ProjectId::try_new("FOO").unwrap(),
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &home,
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(
         error.to_string(),

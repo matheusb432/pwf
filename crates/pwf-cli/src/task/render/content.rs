@@ -22,7 +22,7 @@ struct TaskOutput<'a> {
     effort: Option<&'a str>,
     priority: Option<&'a str>,
     blocked_by: Option<Vec<String>>,
-    prompt: &'a str,
+    body: &'a str,
 }
 
 pub(in crate::task) fn json(task: &Task, project: String) -> anyhow::Result<String> {
@@ -44,7 +44,7 @@ pub(in crate::task) fn json(task: &Task, project: String) -> anyhow::Result<Stri
             .blocked_by
             .as_ref()
             .map(|ids| ids.iter().map(ToString::to_string).collect()),
-        prompt: task.prompt.as_ref().trim(),
+        body: task.body.as_ref().trim(),
     };
     serde_json::to_string_pretty(&output).map_err(Into::into)
 }
@@ -98,7 +98,7 @@ impl<'a> From<&'a pb::ListedTask> for TaskContent<'a> {
             title: &task.heading,
             status: pb::TaskStatus::try_from(task.status).unwrap_or(pb::TaskStatus::Unspecified),
             path: &task.file_path,
-            body: &task.prompt,
+            body: &task.body,
             priority: task.priority.map(priority_name),
             effort: task.effort.map(effort_name),
             tags: task.raw_tags.as_deref(),
@@ -261,7 +261,7 @@ pub(in crate::task) fn json_list(tasks: &[pb::ListedTask]) -> anyhow::Result<Str
                 } else {
                     Some(task.blocked_by.clone())
                 },
-                prompt: task.prompt.trim(),
+                body: task.body.trim(),
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -302,7 +302,7 @@ fn status_name(value: i32) -> &'static str {
 mod tests {
     use pwf_models::{
         revision::ContentRevision,
-        task::{BlockedBy, CommitRanges, TaskId, TaskPrompt, TaskStatus, TaskTags, TaskTitle},
+        task::{BlockedBy, CommitRanges, TaskBody, TaskId, TaskStatus, TaskTags, TaskTitle},
     };
 
     use super::*;
@@ -313,7 +313,7 @@ mod tests {
             id: TaskId::try_new("FOO-0001").unwrap(),
             title: TaskTitle::try_new("Typed task").unwrap(),
             status: TaskStatus::Done,
-            prompt: TaskPrompt::new("\n  authored body  \n"),
+            body: TaskBody::new("\n  authored body  \n"),
             created_at: Some("2026-07-26T12:34:56Z".parse().unwrap()),
             completed_at: Some("2026-08-12T12:34:56Z".parse().unwrap()),
             commits: Some(CommitRanges::try_new("a..b, c..d").unwrap()),
@@ -331,7 +331,7 @@ mod tests {
                 "id": "FOO-0001", "project": "foo", "title": "Typed task", "status": "done",
                 "created": "2026-07-26", "completed": "2026-08-12", "commits": "a..b, c..d",
                 "tags": ["rust", "sqlite"], "effort": "high", "priority": "highest",
-                "blocked_by": ["AUX-0014"], "prompt": "authored body"
+                "blocked_by": ["AUX-0014"], "body": "authored body"
             })
         );
     }

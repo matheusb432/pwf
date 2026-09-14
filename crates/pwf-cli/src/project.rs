@@ -72,7 +72,7 @@ pub async fn run(
     Ok(output)
 }
 
-fn parse_project_id(raw: &str) -> Result<ProjectId, String> {
+pub(crate) fn parse_project_id(raw: &str) -> Result<ProjectId, String> {
     ProjectId::try_new(raw)
         .map_err(|_| "project id must contain two to four ASCII letters".to_string())
 }

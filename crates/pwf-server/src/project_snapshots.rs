@@ -19,7 +19,7 @@ pub(crate) async fn run(state: AppState, interval: Duration, mut shutdown: watch
         let projects = tokio::select! {
             biased;
             _ = shutdown.changed() => return,
-            projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, &state.pool) => projects,
+            projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, &state.projects) => projects,
         };
         let projects = match projects {
             Ok(projects) => projects,

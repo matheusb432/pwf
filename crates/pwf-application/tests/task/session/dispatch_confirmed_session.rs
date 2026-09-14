@@ -118,7 +118,7 @@ async fn assert_stale_dispatch(
     let error = dispatch_confirmed_session::execute(
         &command,
         &store,
-        pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &HomeDirectory::new("/home/dev".into()),
         &clients,
         &mut confirmation,

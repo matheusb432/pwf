@@ -34,14 +34,14 @@ async fn matching_source_row_is_reused(pool: sqlx::SqlitePool) {
 
     add_project::execute(
         project("ONE", "one", "/work/shared", "/tasks/one"),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await
     .unwrap();
     add_project::execute(
         project("TWO", "two", "/work/shared", "/tasks/two"),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await
@@ -60,7 +60,7 @@ async fn duplicate_project_id_is_classified(pool: sqlx::SqlitePool) {
     let home = home();
     add_project::execute(
         project("FOO", "foo", "/work/foo", "/tasks/foo"),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await
@@ -68,7 +68,7 @@ async fn duplicate_project_id_is_classified(pool: sqlx::SqlitePool) {
 
     let error = add_project::execute(
         project("foo", "other", "/work/other", "/tasks/other"),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await
@@ -87,7 +87,7 @@ async fn duplicate_project_title_is_classified(pool: sqlx::SqlitePool) {
     let home = home();
     add_project::execute(
         project("FOO", "foo", "/work/foo", "/tasks/foo"),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await
@@ -95,7 +95,7 @@ async fn duplicate_project_title_is_classified(pool: sqlx::SqlitePool) {
 
     let error = add_project::execute(
         project("ALT", "foo", "/work/other", "/tasks/other"),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await
@@ -114,7 +114,7 @@ async fn failed_project_insert_rolls_back_new_source(pool: sqlx::SqlitePool) {
     let home = home();
     add_project::execute(
         project("FOO", "foo", "/work/foo", "/tasks/foo"),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await
@@ -122,7 +122,7 @@ async fn failed_project_insert_rolls_back_new_source(pool: sqlx::SqlitePool) {
 
     let error = add_project::execute(
         project("ALT", "foo", "/work/rolled-back", "/tasks/other"),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await
@@ -156,7 +156,7 @@ async fn runtime_alias_of_paused_project_is_rejected(pool: sqlx::SqlitePool) {
             "/work/ALT",
             &resolved_path.to_string_lossy(),
         ),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &home,
     )
     .await

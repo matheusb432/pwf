@@ -15,7 +15,7 @@ use super::super::{collection_edit, invalid, parse, required};
 use crate::{patch_field::PatchField, pb, task};
 
 const TASK_COLLECTION_VALUES_MAX: usize = 64;
-const TASK_LANE_VALUES_MAX: usize = 128;
+const TASK_MARKER_SECTION_VALUES_MAX: usize = 128;
 
 impl TryFrom<pb::BacklogTaskRequest> for TaskId {
     type Error = Status;
@@ -32,35 +32,33 @@ pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTa
         TASK_COLLECTION_VALUES_MAX,
     )?;
     ensure_count("tags", request.tags.len(), TASK_COLLECTION_VALUES_MAX)?;
-    if let Some(pb::create_task_request::Prompt::Structured(prompt)) = request.prompt.as_ref() {
-        ensure_lanes("prompt.lanes", prompt.lanes.as_ref(), 0)?;
+    if let Some(pb::create_task_request::Body::Structured(body)) = request.body.as_ref() {
+        ensure_sections("body.sections", body.sections.as_ref(), 0)?;
     }
 
     let pb::CreateTaskRequest {
         project_id,
-        prompt,
+        body,
         blocked_by,
         effort,
         tags,
         priority,
     } = request;
 
-    let prompt = match required("prompt", prompt)? {
-        pb::create_task_request::Prompt::Shorthand(value) => {
-            task::AddTaskPrompt::from_shorthand(value)
-        }
-        pb::create_task_request::Prompt::Structured(value) => {
+    let body = match required("body", body)? {
+        pb::create_task_request::Body::Shorthand(value) => task::AddTaskBody::from_shorthand(value),
+        pb::create_task_request::Body::Structured(value) => {
             let title =
-                TaskTitle::try_new(value.title).map_err(|error| invalid("prompt.title", error))?;
-            task::AddTaskPrompt::from_structured(
+                TaskTitle::try_new(value.title).map_err(|error| invalid("body.title", error))?;
+            task::AddTaskBody::from_structured(
                 title,
-                task_lanes(value.lanes.unwrap_or_default())?,
+                task_marker_sections(value.sections.unwrap_or_default())?,
             )
         }
     };
     Ok(task::AddTask {
         project_id: ProjectId::try_new(project_id).map_err(|error| invalid("project_id", error))?,
-        prompt,
+        body,
         blocked_by: blocked_by_values(blocked_by)?,
         effort: effort.map(effort_tier).transpose()?,
         tags: task_tag_values(tags)?,
@@ -266,14 +264,17 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
                 .transpose()
                 .map_err(|error| invalid("content.title", error))?
                 .into();
-            let additions = task_lanes(value.additions.unwrap_or_default())?;
+            let additions = task_marker_sections(value.additions.unwrap_or_default())?;
             let removals = value
                 .removals
                 .into_iter()
-                .map(task_lane)
-                .collect::<Result<Vec<task::TaskLane>, _>>()?;
-            task::EditTaskContent::structured(title, task::TaskLaneEdits::new(additions, removals))
-                .map_err(|error| invalid("content", error))
+                .map(task_marker_section)
+                .collect::<Result<Vec<task::TaskMarkerSection>, _>>()?;
+            task::EditTaskContent::structured(
+                title,
+                task::TaskMarkerSectionEdits::new(additions, removals),
+            )
+            .map_err(|error| invalid("content", error))
         }
         pb::task_content_edit::Content::Append(value) => {
             let title = value
@@ -282,7 +283,7 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
                 .transpose()
                 .map_err(|error| invalid("content.title", error))?
                 .into();
-            task::EditTaskContent::append_shorthand(title, value.prompt)
+            task::EditTaskContent::append_shorthand(title, value.body)
                 .map_err(|error| invalid("content", error))
         }
         pb::task_content_edit::Content::Replace(value) => {
@@ -291,14 +292,16 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
     }
 }
 
-fn task_lanes(lanes: pb::TaskLanes) -> Result<task::TaskLanes, Status> {
-    task::TaskLanes::try_new(
-        lanes.goals,
-        lanes.context,
-        lanes.constraints,
-        lanes.done_when,
+fn task_marker_sections(
+    sections: pb::TaskMarkerSections,
+) -> Result<task::TaskMarkerSections, Status> {
+    task::TaskMarkerSections::try_new(
+        sections.goals,
+        sections.context,
+        sections.constraints,
+        sections.done_when,
     )
-    .map_err(|error| invalid("lanes", error))
+    .map_err(|error| invalid("sections", error))
 }
 
 fn effort_tier(value: i32) -> Result<EffortTier, Status> {
@@ -379,13 +382,15 @@ fn priority_edit(value: Option<pb::PriorityEdit>) -> Result<PatchField<PriorityT
     }
 }
 
-fn task_lane(value: i32) -> Result<task::TaskLane, Status> {
-    match pb::TaskLane::try_from(value).ok() {
-        Some(pb::TaskLane::Goal) => Ok(task::TaskLane::Goal),
-        Some(pb::TaskLane::Context) => Ok(task::TaskLane::Context),
-        Some(pb::TaskLane::Constraint) => Ok(task::TaskLane::Constraint),
-        Some(pb::TaskLane::DoneWhen) => Ok(task::TaskLane::DoneWhen),
-        Some(pb::TaskLane::Unspecified) | None => Err(invalid("lane", "must be specified")),
+fn task_marker_section(value: i32) -> Result<task::TaskMarkerSection, Status> {
+    match pb::TaskMarkerSection::try_from(value).ok() {
+        Some(pb::TaskMarkerSection::Goal) => Ok(task::TaskMarkerSection::Goal),
+        Some(pb::TaskMarkerSection::Context) => Ok(task::TaskMarkerSection::Context),
+        Some(pb::TaskMarkerSection::Constraint) => Ok(task::TaskMarkerSection::Constraint),
+        Some(pb::TaskMarkerSection::DoneWhen) => Ok(task::TaskMarkerSection::DoneWhen),
+        Some(pb::TaskMarkerSection::Unspecified) | None => {
+            Err(invalid("section", "must be specified"))
+        }
     }
 }
 
@@ -429,8 +434,8 @@ fn ensure_update_bounds(request: &pb::UpdateTaskRequest) -> Result<(), Status> {
     if let Some(content) = request.content.as_ref()
         && let Some(pb::task_content_edit::Content::Structured(edit)) = content.content.as_ref()
     {
-        ensure_lanes(
-            "content.lanes",
+        ensure_sections(
+            "content.sections",
             edit.additions.as_ref(),
             edit.removals.len(),
         )?;
@@ -447,23 +452,23 @@ fn ensure_update_bounds(request: &pb::UpdateTaskRequest) -> Result<(), Status> {
     )
 }
 
-fn ensure_lanes(
+fn ensure_sections(
     field: &str,
-    lanes: Option<&pb::TaskLanes>,
+    sections: Option<&pb::TaskMarkerSections>,
     additional: usize,
 ) -> Result<(), Status> {
-    let count = lanes.map_or(0, |lanes| {
-        lanes
+    let count = sections.map_or(0, |sections| {
+        sections
             .goals
             .len()
-            .saturating_add(lanes.context.len())
-            .saturating_add(lanes.constraints.len())
-            .saturating_add(lanes.done_when.len())
+            .saturating_add(sections.context.len())
+            .saturating_add(sections.constraints.len())
+            .saturating_add(sections.done_when.len())
     });
     ensure_count(
         field,
         count.saturating_add(additional),
-        TASK_LANE_VALUES_MAX,
+        TASK_MARKER_SECTION_VALUES_MAX,
     )
 }
 

@@ -1,6 +1,6 @@
 use clap::{Args, FromArgMatches, Subcommand};
 use pwf_client::{
-    pb::{TaskLane, TaskLanes, TaskStatusFilter},
+    pb::{TaskMarkerSection, TaskMarkerSections, TaskStatusFilter},
     project::ProjectClient,
     task::{TaskClient, TaskDag},
 };
@@ -208,43 +208,46 @@ fn task_title(raw: &str) -> anyhow::Result<(TaskTitle, bool)> {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum LaneFlagMode {
+enum MarkerSectionFlagMode {
     Add,
     Edit,
 }
 
-impl LaneFlagMode {
-    fn flag(self, lane: TaskLane) -> &'static str {
-        match (self, lane) {
-            (Self::Add, TaskLane::Goal) => "--goal",
-            (Self::Add, TaskLane::Context) => "--context",
-            (Self::Add, TaskLane::Constraint) => "--constraint",
-            (Self::Add, TaskLane::DoneWhen) => "--done-when",
-            (Self::Edit, TaskLane::Goal) => "--add-goal",
-            (Self::Edit, TaskLane::Context) => "--add-context",
-            (Self::Edit, TaskLane::Constraint) => "--add-constraint",
-            (Self::Edit, TaskLane::DoneWhen) => "--add-done-when",
-            (_, TaskLane::Unspecified) => "--lane",
+impl MarkerSectionFlagMode {
+    fn flag(self, section: TaskMarkerSection) -> &'static str {
+        match (self, section) {
+            (Self::Add, TaskMarkerSection::Goal) => "--goal",
+            (Self::Add, TaskMarkerSection::Context) => "--context",
+            (Self::Add, TaskMarkerSection::Constraint) => "--constraint",
+            (Self::Add, TaskMarkerSection::DoneWhen) => "--done-when",
+            (Self::Edit, TaskMarkerSection::Goal) => "--add-goal",
+            (Self::Edit, TaskMarkerSection::Context) => "--add-context",
+            (Self::Edit, TaskMarkerSection::Constraint) => "--add-constraint",
+            (Self::Edit, TaskMarkerSection::DoneWhen) => "--add-done-when",
+            (_, TaskMarkerSection::Unspecified) => "--marker-section",
         }
     }
 }
 
-fn task_lanes(
+fn task_marker_sections(
     goals: &[String],
     context: &[String],
     constraints: &[String],
     done_when: &[String],
-    mode: LaneFlagMode,
-) -> anyhow::Result<TaskLanes> {
-    Ok(TaskLanes {
-        goals: normalize_lanes(goals, mode.flag(TaskLane::Goal))?,
-        context: normalize_lanes(context, mode.flag(TaskLane::Context))?,
-        constraints: normalize_lanes(constraints, mode.flag(TaskLane::Constraint))?,
-        done_when: normalize_lanes(done_when, mode.flag(TaskLane::DoneWhen))?,
+    mode: MarkerSectionFlagMode,
+) -> anyhow::Result<TaskMarkerSections> {
+    Ok(TaskMarkerSections {
+        goals: normalize_marker_sections(goals, mode.flag(TaskMarkerSection::Goal))?,
+        context: normalize_marker_sections(context, mode.flag(TaskMarkerSection::Context))?,
+        constraints: normalize_marker_sections(
+            constraints,
+            mode.flag(TaskMarkerSection::Constraint),
+        )?,
+        done_when: normalize_marker_sections(done_when, mode.flag(TaskMarkerSection::DoneWhen))?,
     })
 }
 
-fn normalize_lanes(values: &[String], flag: &str) -> anyhow::Result<Vec<String>> {
+fn normalize_marker_sections(values: &[String], flag: &str) -> anyhow::Result<Vec<String>> {
     values
         .iter()
         .map(|value| {
@@ -279,7 +282,7 @@ pub struct TaskArguments {
 
 #[derive(Subcommand, Debug)]
 enum TaskCommand {
-    /// Add a pwf task with shorthand prompt text or explicit args
+    /// Add a pwf task with shorthand body text or explicit args
     Add(add::Arguments),
     /// Copy a task into a new active task, optionally in another project.
     Clone(clone::Arguments),
@@ -294,7 +297,7 @@ enum TaskCommand {
     Backlog(backlog::Arguments),
     /// Activate a task; closed tasks require confirmation to clear completion data
     Activate(activate::Arguments),
-    /// Edit an active or backlogged task's prompt body, title, blocked-by tasks, tags, or effort
+    /// Edit an active or backlogged task's body, title, blocked-by tasks, tags, or effort
     Edit(Box<edit::Arguments>),
     /// Show a task's full content
     #[command(alias = "g")]
@@ -311,7 +314,7 @@ pub async fn run(
     settings: &UserSettings,
     client: &TaskClient,
     projects: &ProjectClient,
-) -> anyhow::Result<String> {
+) -> Result<String, crate::error::Error> {
     let task_status_colors = settings.task_status_colors();
     let output = match command {
         Command::Task(arguments) => match &arguments.command {
@@ -355,7 +358,7 @@ pub async fn run(
                 list::run(&arguments, console, settings, client, projects).await?
             }
             route::ResolvedCommand::RejectUnsupportedTaskCreation => {
-                return Err(anyhow::anyhow!("Use: pwf task add <project> \"<prompt>\""));
+                return Err(anyhow::anyhow!("Use: pwf task add <project> \"<body>\"").into());
             }
         },
     };
@@ -403,7 +406,7 @@ impl ContentSelection {
 
 #[cfg(test)]
 mod tests {
-    use super::{LaneFlagMode, task_lanes, task_title};
+    use super::{MarkerSectionFlagMode, task_marker_sections, task_title};
 
     #[test]
     fn task_title_reports_whitespace_normalization_only() {
@@ -429,17 +432,23 @@ mod tests {
     }
 
     #[test]
-    fn task_lanes_report_the_owning_machine_flag() {
-        let empty_goal =
-            task_lanes(&["  ".to_string()], &[], &[], &[], LaneFlagMode::Add).unwrap_err();
+    fn task_marker_sections_report_the_owning_machine_flag() {
+        let empty_goal = task_marker_sections(
+            &["  ".to_string()],
+            &[],
+            &[],
+            &[],
+            MarkerSectionFlagMode::Add,
+        )
+        .unwrap_err();
         assert_eq!(empty_goal.to_string(), "--goal cannot be empty.");
 
-        let multiline_context = task_lanes(
+        let multiline_context = task_marker_sections(
             &[],
             &["first\nsecond".to_string()],
             &[],
             &[],
-            LaneFlagMode::Edit,
+            MarkerSectionFlagMode::Edit,
         )
         .unwrap_err();
         assert_eq!(

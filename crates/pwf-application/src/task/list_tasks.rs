@@ -1,3 +1,4 @@
+use crate::ports::project_store::ProjectStore;
 mod snapshots;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -108,13 +109,13 @@ struct TaskListPage {
 pub async fn execute(
     query: &ListTasks,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     task_locations: &impl ProjectTaskLocationClient,
     snapshots: &ListTasksSnapshots,
     settings_reader: &impl UserSettingsReader,
 ) -> Result<ListedTasks, ListTasksError> {
     let selected = match query.project_id.as_ref() {
-        Some(id) => Some(get_active_project::execute(id, pool).await?),
+        Some(id) => Some(get_active_project::execute(id, project_store).await?),
         None => None,
     };
     let settings = settings_reader.load()?;
@@ -134,8 +135,15 @@ pub async fn execute(
         .map(|project| task_locations.project_task_path(project))
         .transpose()
         .map_err(|source| ListTasksError::ReadProjectTaskPath(anyhow::Error::new(source)))?;
-    let mut result =
-        collect_page(&query, cursor.as_ref(), &binding, store, pool, snapshots).await?;
+    let mut result = collect_page(
+        &query,
+        cursor.as_ref(),
+        &binding,
+        store,
+        project_store,
+        snapshots,
+    )
+    .await?;
 
     if query.detail.includes_relationship_statuses() {
         let project_ids = result
@@ -152,7 +160,7 @@ pub async fn execute(
             })
             .cloned()
             .collect();
-        let relationship_projects = get_projects::execute(&project_ids, pool)
+        let relationship_projects = get_projects::execute(&project_ids, project_store)
             .await
             .map_err(|error| ListTasksError::QueryProject(anyhow::Error::new(error)))?;
         populate_relationship_statuses(
@@ -179,7 +187,7 @@ async fn collect_page(
     cursor: Option<&PageCursor>,
     binding: &str,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     snapshots: &ListTasksSnapshots,
 ) -> Result<TaskListPage, ListTasksError> {
     if let Some(cursor) = cursor.filter(|cursor| cursor.snapshot.is_some()) {
@@ -188,7 +196,7 @@ async fn collect_page(
     let projects = if query.project.is_some() {
         Vec::new()
     } else {
-        list_projects::execute(ProjectStatusFilter::ActiveOnly, pool)
+        list_projects::execute(ProjectStatusFilter::ActiveOnly, project_store)
             .await
             .map_err(|error| ListTasksError::QueryProject(anyhow::Error::new(error)))?
     };

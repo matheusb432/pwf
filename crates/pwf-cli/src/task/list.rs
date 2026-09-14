@@ -9,7 +9,7 @@ use pwf_client::{
     task::TaskClient,
 };
 use pwf_models::{
-    project::ProjectSelector,
+    project::ProjectId,
     settings::UserSettings,
     task::{TagInput, TaskTags},
 };
@@ -25,8 +25,8 @@ const TASK_LIST_PAGE_SIZE: u32 = 256;
 #[derive(Args, Debug)]
 pub struct Arguments {
     /// Limit to one project.
-    #[arg(long)]
-    pub(crate) project: Option<ProjectSelector>,
+    #[arg(long, value_parser = crate::project::parse_project_id)]
+    pub(crate) project: Option<ProjectId>,
     #[command(flatten)]
     pub(super) options: Options,
     /// Show only tasks tagged with this exact effort/complexity tier.
@@ -70,11 +70,11 @@ pub(super) async fn run(
     settings: &UserSettings,
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
-) -> anyhow::Result<String> {
+) -> Result<String, crate::error::Error> {
     let options = &arguments.options;
     let project_id = match arguments.project.as_ref() {
-        Some(selector) => Some(
-            crate::project::resolve_project_id(selector, projects)
+        Some(id) => Some(
+            crate::project::resolve_project_id(id, projects)
                 .await?
                 .to_string(),
         ),
@@ -112,22 +112,16 @@ pub(super) async fn run(
         page_size: TASK_LIST_PAGE_SIZE,
         page_token: None,
     };
-    let mut result = client
-        .list_tasks(request.clone())
-        .await
-        .map_err(crate::rpc_error)?;
+    let mut result = client.list_tasks(request.clone()).await?;
     let mut seen_tokens = std::collections::HashSet::new();
     while let Some(token) = result.next_page_token.take() {
         if !seen_tokens.insert(token.clone()) {
-            return Err(anyhow::anyhow!(
-                "pwf-server repeated a task-list continuation token"
-            ));
+            return Err(
+                anyhow::anyhow!("pwf-server repeated a task-list continuation token").into(),
+            );
         }
         request.page_token = Some(token);
-        let mut page = client
-            .list_tasks(request.clone())
-            .await
-            .map_err(crate::rpc_error)?;
+        let mut page = client.list_tasks(request.clone()).await?;
         result.tasks.append(&mut page.tasks);
         result.next_page_token = page.next_page_token;
     }
@@ -137,7 +131,9 @@ pub(super) async fn run(
     );
     let format = options.long.map(|selection| selection.resolve(console));
     match format {
-        Some(ContentFormat::Json) => return super::render::content::json_list(&result.tasks),
+        Some(ContentFormat::Json) => {
+            return super::render::content::json_list(&result.tasks).map_err(Into::into);
+        }
         Some(ContentFormat::Md) => {
             let sources = result
                 .tasks
@@ -156,7 +152,8 @@ pub(super) async fn run(
                 settings,
                 console.color(),
                 console.stdout_columns(),
-            );
+            )
+            .map_err(Into::into);
         }
         None => {}
     }

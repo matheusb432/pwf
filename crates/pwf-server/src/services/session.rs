@@ -52,7 +52,7 @@ impl pb::session_service_server::SessionService for SessionGrpcService {
         let planned = plan_session::execute(
             &command,
             &self.state.store,
-            &self.state.pool,
+            &self.state.projects,
             &self.state.home,
             &clients,
         )
@@ -104,7 +104,7 @@ impl pb::session_service_server::SessionService for SessionGrpcService {
             let result = dispatch_confirmed_session::execute(
                 &command,
                 &state.store,
-                &state.pool,
+                &state.projects,
                 &state.home,
                 &clients,
                 &mut confirmation,

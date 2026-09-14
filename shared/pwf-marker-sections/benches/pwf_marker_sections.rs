@@ -2,20 +2,21 @@ use std::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use pwf_marker_sections::{
-    Adapter as _, LaneConfiguration, LaneDefinition, MarkdownAdapter, ParsedPrompt, parse,
+    Adapter as _, MarkdownAdapter, MarkerSectionConfiguration, MarkerSectionDefinition,
+    ParsedMarkerSections, parse,
 };
 
 const SAMPLE_SIZE: usize = 20;
-const PLAIN_PROMPT: &str = "refactor the prompt lane parser without changing its output";
-const STRUCTURED_PROMPT: &str = "refactor prompt lanes / preserve authored goals / keep marker order stable /c parsing currently allocates token and bullet buffers /n retain the public ParsedPrompt contract /n preserve whitespace normalization /d parser and renderer tests remain green /d benchmarks show the cost of each stage";
+const PLAIN_BODY: &str = "refactor the body section parser without changing its output";
+const STRUCTURED_BODY: &str = "refactor body sections / preserve authored goals / keep marker order stable /c parsing currently allocates token and bullet buffers /n retain the public ParsedMarkerSections contract /n preserve whitespace normalization /d parser and renderer tests remain green /d benchmarks show the cost of each stage";
 
 fn pwf_marker_sections(criterion: &mut Criterion) {
     let configuration = configuration();
-    let dense_prompt = dense_prompt();
+    let dense_body = dense_body();
     let cases = [
-        PromptCase::new("plain", PLAIN_PROMPT),
-        PromptCase::new("structured", STRUCTURED_PROMPT),
-        PromptCase::new("marker-dense", &dense_prompt),
+        BodyCase::new("plain", PLAIN_BODY),
+        BodyCase::new("structured", STRUCTURED_BODY),
+        BodyCase::new("marker-dense", &dense_body),
     ];
 
     benchmark_parse(criterion, &configuration, &cases);
@@ -25,17 +26,17 @@ fn pwf_marker_sections(criterion: &mut Criterion) {
 
 fn benchmark_parse(
     criterion: &mut Criterion,
-    configuration: &LaneConfiguration<4>,
-    cases: &[PromptCase<'_>],
+    configuration: &MarkerSectionConfiguration<4>,
+    cases: &[BodyCase<'_>],
 ) {
     let mut group = criterion.benchmark_group("pwf-marker-sections/parse");
     for case in cases {
-        group.throughput(Throughput::Bytes(case.prompt.len() as u64));
+        group.throughput(Throughput::Bytes(case.body.len() as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(case.name),
-            &case.prompt,
-            |bencher, prompt| {
-                bencher.iter(|| black_box(parse(black_box(prompt), black_box(configuration))));
+            &case.body,
+            |bencher, body| {
+                bencher.iter(|| black_box(parse(black_box(body), black_box(configuration))));
             },
         );
     }
@@ -44,26 +45,26 @@ fn benchmark_parse(
 
 fn benchmark_render_markdown(
     criterion: &mut Criterion,
-    configuration: &LaneConfiguration<4>,
-    cases: &[PromptCase<'_>],
+    configuration: &MarkerSectionConfiguration<4>,
+    cases: &[BodyCase<'_>],
 ) {
     let parsed = cases
         .iter()
         .map(|case| ParsedCase {
             name: case.name,
-            prompt: parse(case.prompt, configuration),
+            body: parse(case.body, configuration),
         })
         .collect::<Vec<_>>();
     let mut group = criterion.benchmark_group("pwf-marker-sections/render-markdown");
     for case in &parsed {
         let adapter = MarkdownAdapter::new(configuration);
-        let rendered_bytes = adapter.render(&case.prompt).len() as u64;
+        let rendered_bytes = adapter.render(&case.body).len() as u64;
         group.throughput(Throughput::Bytes(rendered_bytes));
         group.bench_with_input(
             BenchmarkId::from_parameter(case.name),
-            &case.prompt,
-            |bencher, prompt| {
-                bencher.iter(|| black_box(adapter.render(black_box(prompt))));
+            &case.body,
+            |bencher, body| {
+                bencher.iter(|| black_box(adapter.render(black_box(body))));
             },
         );
     }
@@ -72,8 +73,8 @@ fn benchmark_render_markdown(
 
 fn benchmark_parse_and_render(
     criterion: &mut Criterion,
-    configuration: &LaneConfiguration<4>,
-    cases: &[PromptCase<'_>],
+    configuration: &MarkerSectionConfiguration<4>,
+    cases: &[BodyCase<'_>],
 ) {
     let mut group = criterion.benchmark_group("pwf-marker-sections/parse-and-render");
     for case in cases {
@@ -84,46 +85,44 @@ fn benchmark_parse_and_render(
 
 fn benchmark_parse_and_render_case(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    configuration: &LaneConfiguration<4>,
-    case: &PromptCase<'_>,
+    configuration: &MarkerSectionConfiguration<4>,
+    case: &BodyCase<'_>,
 ) {
-    group.throughput(Throughput::Bytes(case.prompt.len() as u64));
+    group.throughput(Throughput::Bytes(case.body.len() as u64));
     group.bench_with_input(
         BenchmarkId::from_parameter(case.name),
-        &case.prompt,
-        |bencher, prompt| {
-            bencher.iter(|| {
-                black_box(parse_and_render(
-                    black_box(prompt),
-                    black_box(configuration),
-                ))
-            });
+        &case.body,
+        |bencher, body| {
+            bencher.iter(|| black_box(parse_and_render(black_box(body), black_box(configuration))));
         },
     );
 }
 
-fn parse_and_render(prompt: &str, configuration: &LaneConfiguration<4>) -> String {
-    MarkdownAdapter::new(configuration).render(&parse(prompt, configuration))
+fn parse_and_render(body: &str, configuration: &MarkerSectionConfiguration<4>) -> String {
+    MarkdownAdapter::new(configuration).render(&parse(body, configuration))
 }
 
-fn configuration() -> LaneConfiguration<4> {
-    require_configuration(LaneConfiguration::try_new([
-        require_lane(LaneDefinition::try_new("/g", "Goals")),
-        require_lane(LaneDefinition::try_new("/c", "Context")),
-        require_lane(LaneDefinition::try_new("/n", "Constraints")),
-        require_lane(LaneDefinition::try_new("/d", "Done When")),
+fn configuration() -> MarkerSectionConfiguration<4> {
+    require_configuration(MarkerSectionConfiguration::try_new([
+        require_section(MarkerSectionDefinition::try_new("/g", "Goals")),
+        require_section(MarkerSectionDefinition::try_new("/c", "Context")),
+        require_section(MarkerSectionDefinition::try_new("/n", "Constraints")),
+        require_section(MarkerSectionDefinition::try_new("/d", "Done When")),
     ]))
 }
 
-fn require_lane(
-    result: Result<LaneDefinition, pwf_marker_sections::LaneDefinitionError>,
-) -> LaneDefinition {
+fn require_section(
+    result: Result<MarkerSectionDefinition, pwf_marker_sections::MarkerSectionDefinitionError>,
+) -> MarkerSectionDefinition {
     result.unwrap_or_else(|error| benchmark_configuration_error(&error))
 }
 
 fn require_configuration(
-    result: Result<LaneConfiguration<4>, pwf_marker_sections::LaneConfigurationError>,
-) -> LaneConfiguration<4> {
+    result: Result<
+        MarkerSectionConfiguration<4>,
+        pwf_marker_sections::MarkerSectionConfigurationError,
+    >,
+) -> MarkerSectionConfiguration<4> {
     result.unwrap_or_else(|error| benchmark_configuration_error(&error))
 }
 
@@ -132,37 +131,37 @@ fn benchmark_configuration_error(error: &dyn std::fmt::Display) -> ! {
     std::process::exit(1)
 }
 
-fn dense_prompt() -> String {
+fn dense_body() -> String {
     let markers = ["/g", "/c", "/n", "/d"];
     (0..64)
         .map(|index| {
             let marker = markers[index % markers.len()];
-            format!("{marker} lane item {index} retains meaningful authored text")
+            format!("{marker} section item {index} retains meaningful authored text")
         })
         .fold(
-            String::from("refactor dense prompt lanes"),
-            |mut prompt, lane| {
-                prompt.push(' ');
-                prompt.push_str(&lane);
-                prompt
+            String::from("refactor dense body sections"),
+            |mut body, section| {
+                body.push(' ');
+                body.push_str(&section);
+                body
             },
         )
 }
 
-struct PromptCase<'prompt> {
+struct BodyCase<'body> {
     name: &'static str,
-    prompt: &'prompt str,
+    body: &'body str,
 }
 
-impl<'prompt> PromptCase<'prompt> {
-    const fn new(name: &'static str, prompt: &'prompt str) -> Self {
-        Self { name, prompt }
+impl<'body> BodyCase<'body> {
+    const fn new(name: &'static str, body: &'body str) -> Self {
+        Self { name, body }
     }
 }
 
 struct ParsedCase {
     name: &'static str,
-    prompt: ParsedPrompt<4>,
+    body: ParsedMarkerSections<4>,
 }
 
 criterion_group! {

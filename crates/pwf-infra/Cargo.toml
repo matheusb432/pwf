@@ -29,6 +29,10 @@ harness = false
 name = "dag_traversal"
 harness = false
 
+[[bench]]
+name = "task_creation"
+harness = false
+
 [dependencies]
 anyhow = { workspace = true }
 atomic-write-file = { workspace = true }

@@ -1,30 +1,31 @@
-//! Validated runtime configuration for lane markers and rendered headers.
+//! Validated runtime configuration for section markers and rendered headers.
 
 use std::array;
 
-/// Maximum number of Unicode scalar values in one rendered lane header.
-pub const LANE_HEADER_CHARACTER_LIMIT: usize = 128;
+/// Maximum number of Unicode scalar values in one rendered section header.
+pub const MARKER_SECTION_HEADER_CHARACTER_LIMIT: usize = 128;
 const MARKER_SLOT_COUNT: usize = 52;
-const UNKNOWN_LANE_INDEX: usize = usize::MAX;
+const UNKNOWN_SECTION_INDEX: usize = usize::MAX;
 
-/// Defines one lane's input marker and rendered header.
+/// Defines one section's input marker and rendered header.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaneDefinition {
+pub struct MarkerSectionDefinition {
     marker: String,
     header: String,
 }
 
-impl LaneDefinition {
-    /// Constructs a lane definition from a `/` plus one ASCII letter marker and a single-line
+impl MarkerSectionDefinition {
+    /// Constructs a section definition from a `/` plus one ASCII letter marker and a single-line
     /// header.
     ///
     /// # Errors
     ///
-    /// Returns [`LaneDefinitionError`] when either value cannot form unambiguous lane syntax.
+    /// Returns [`MarkerSectionDefinitionError`] when either value cannot form unambiguous section
+    /// syntax.
     pub fn try_new(
         marker: impl Into<String>,
         header: impl Into<String>,
-    ) -> Result<Self, LaneDefinitionError> {
+    ) -> Result<Self, MarkerSectionDefinitionError> {
         let marker = marker.into();
         validate_marker(&marker)?;
         let header = header.into();
@@ -43,118 +44,120 @@ impl LaneDefinition {
     }
 }
 
-fn validate_marker(marker: &str) -> Result<(), LaneDefinitionError> {
+fn validate_marker(marker: &str) -> Result<(), MarkerSectionDefinitionError> {
     let bytes = marker.as_bytes();
     if bytes.len() == 2 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() {
         return Ok(());
     }
-    Err(LaneDefinitionError::InvalidMarker {
+    Err(MarkerSectionDefinitionError::InvalidMarker {
         marker: marker.to_string(),
     })
 }
 
-fn validate_header(header: &str) -> Result<(), LaneDefinitionError> {
+fn validate_header(header: &str) -> Result<(), MarkerSectionDefinitionError> {
     if header.is_empty() {
-        return Err(LaneDefinitionError::EmptyHeader);
+        return Err(MarkerSectionDefinitionError::EmptyHeader);
     }
     if header.trim() != header {
-        return Err(LaneDefinitionError::UntrimmedHeader {
+        return Err(MarkerSectionDefinitionError::UntrimmedHeader {
             header: header.to_string(),
         });
     }
     if header.contains(['\n', '\r']) {
-        return Err(LaneDefinitionError::MultilineHeader {
+        return Err(MarkerSectionDefinitionError::MultilineHeader {
             header: header.to_string(),
         });
     }
     let characters = header.chars().count();
-    if characters > LANE_HEADER_CHARACTER_LIMIT {
-        return Err(LaneDefinitionError::HeaderTooLong {
+    if characters > MARKER_SECTION_HEADER_CHARACTER_LIMIT {
+        return Err(MarkerSectionDefinitionError::HeaderTooLong {
             characters,
-            limit: LANE_HEADER_CHARACTER_LIMIT,
+            limit: MARKER_SECTION_HEADER_CHARACTER_LIMIT,
         });
     }
     Ok(())
 }
 
-/// Reports one invalid lane definition.
+/// Reports one invalid section definition.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LaneDefinitionError {
-    #[error("lane marker must be `/` followed by one ASCII letter: {marker:?}")]
+pub enum MarkerSectionDefinitionError {
+    #[error("section marker must be `/` followed by one ASCII letter: {marker:?}")]
     InvalidMarker { marker: String },
-    #[error("lane header cannot be empty")]
+    #[error("section header cannot be empty")]
     EmptyHeader,
-    #[error("lane header cannot start or end with whitespace: {header:?}")]
+    #[error("section header cannot start or end with whitespace: {header:?}")]
     UntrimmedHeader { header: String },
-    #[error("lane header must be a single line: {header:?}")]
+    #[error("section header must be a single line: {header:?}")]
     MultilineHeader { header: String },
-    #[error("lane header has {characters} characters; maximum is {limit}")]
+    #[error("section header has {characters} characters; maximum is {limit}")]
     HeaderTooLong { characters: usize, limit: usize },
 }
 
-/// Holds an ordered, non-empty set of lane definitions.
+/// Holds an ordered, non-empty set of section definitions.
 ///
-/// The first lane receives text after `/` and supplies the first Markdown section.
+/// The first section receives text after `/` and supplies the first Markdown section.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaneConfiguration<const N: usize> {
-    lanes: [LaneDefinition; N],
-    marker_lane_indexes: [usize; MARKER_SLOT_COUNT],
+pub struct MarkerSectionConfiguration<const N: usize> {
+    sections: [MarkerSectionDefinition; N],
+    marker_section_indexes: [usize; MARKER_SLOT_COUNT],
 }
 
-impl<const N: usize> LaneConfiguration<N> {
+impl<const N: usize> MarkerSectionConfiguration<N> {
     /// Constructs a configuration with unique markers and headers.
     ///
     /// # Errors
     ///
-    /// Returns [`LaneConfigurationError`] when the set is empty or ambiguous.
-    pub fn try_new(lanes: [LaneDefinition; N]) -> Result<Self, LaneConfigurationError> {
+    /// Returns [`MarkerSectionConfigurationError`] when the set is empty or ambiguous.
+    pub fn try_new(
+        sections: [MarkerSectionDefinition; N],
+    ) -> Result<Self, MarkerSectionConfigurationError> {
         if N == 0 {
-            return Err(LaneConfigurationError::Empty);
+            return Err(MarkerSectionConfigurationError::Empty);
         }
-        let marker_lane_indexes = marker_lane_indexes(&lanes)?;
-        validate_unique_headers(&lanes)?;
+        let marker_section_indexes = marker_section_indexes(&sections)?;
+        validate_unique_headers(&sections)?;
         Ok(Self {
-            lanes,
-            marker_lane_indexes,
+            sections,
+            marker_section_indexes,
         })
     }
 
     #[must_use]
-    pub fn lanes(&self) -> &[LaneDefinition; N] {
-        &self.lanes
+    pub fn sections(&self) -> &[MarkerSectionDefinition; N] {
+        &self.sections
     }
 
-    pub(crate) fn empty_lane_items() -> [Vec<String>; N] {
+    pub(crate) fn empty_section_items() -> [Vec<String>; N] {
         array::from_fn(|_| Vec::new())
     }
 
-    pub(crate) fn marker_lane(&self, marker_letter: u8) -> MarkerLane {
-        let lane_index = self.marker_lane_indexes[marker_slot(marker_letter)];
-        if lane_index == UNKNOWN_LANE_INDEX {
-            MarkerLane::Unknown
+    pub(crate) fn marker_section(&self, marker_letter: u8) -> MarkerSection {
+        let section_index = self.marker_section_indexes[marker_slot(marker_letter)];
+        if section_index == UNKNOWN_SECTION_INDEX {
+            MarkerSection::Unknown
         } else {
-            MarkerLane::Configured(lane_index)
+            MarkerSection::Configured(section_index)
         }
     }
 }
 
-pub(crate) enum MarkerLane {
+pub(crate) enum MarkerSection {
     Configured(usize),
     Unknown,
 }
 
-fn marker_lane_indexes(
-    lanes: &[LaneDefinition],
-) -> Result<[usize; MARKER_SLOT_COUNT], LaneConfigurationError> {
-    let mut indexes = [UNKNOWN_LANE_INDEX; MARKER_SLOT_COUNT];
-    for (lane_index, lane) in lanes.iter().enumerate() {
-        let slot = marker_slot(lane.marker.as_bytes()[1]);
-        if indexes[slot] != UNKNOWN_LANE_INDEX {
-            return Err(LaneConfigurationError::DuplicateMarker {
-                marker: lane.marker.clone(),
+fn marker_section_indexes(
+    sections: &[MarkerSectionDefinition],
+) -> Result<[usize; MARKER_SLOT_COUNT], MarkerSectionConfigurationError> {
+    let mut indexes = [UNKNOWN_SECTION_INDEX; MARKER_SLOT_COUNT];
+    for (section_index, section) in sections.iter().enumerate() {
+        let slot = marker_slot(section.marker.as_bytes()[1]);
+        if indexes[slot] != UNKNOWN_SECTION_INDEX {
+            return Err(MarkerSectionConfigurationError::DuplicateMarker {
+                marker: section.marker.clone(),
             });
         }
-        indexes[slot] = lane_index;
+        indexes[slot] = section_index;
     }
     Ok(indexes)
 }
@@ -167,28 +170,30 @@ const fn marker_slot(marker_letter: u8) -> usize {
     }
 }
 
-fn validate_unique_headers(lanes: &[LaneDefinition]) -> Result<(), LaneConfigurationError> {
-    for (index, lane) in lanes.iter().enumerate() {
-        if lanes[index + 1..]
+fn validate_unique_headers(
+    sections: &[MarkerSectionDefinition],
+) -> Result<(), MarkerSectionConfigurationError> {
+    for (index, section) in sections.iter().enumerate() {
+        if sections[index + 1..]
             .iter()
-            .any(|other| lane.header == other.header)
+            .any(|other| section.header == other.header)
         {
-            return Err(LaneConfigurationError::DuplicateHeader {
-                header: lane.header.clone(),
+            return Err(MarkerSectionConfigurationError::DuplicateHeader {
+                header: section.header.clone(),
             });
         }
     }
     Ok(())
 }
 
-/// Reports an ambiguous or empty lane configuration.
+/// Reports an ambiguous or empty section configuration.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LaneConfigurationError {
-    #[error("lane configuration cannot be empty")]
+pub enum MarkerSectionConfigurationError {
+    #[error("section configuration cannot be empty")]
     Empty,
-    #[error("lane marker is configured more than once: {marker:?}")]
+    #[error("section marker is configured more than once: {marker:?}")]
     DuplicateMarker { marker: String },
-    #[error("lane header is configured more than once: {header:?}")]
+    #[error("section header is configured more than once: {header:?}")]
     DuplicateHeader { header: String },
 }
 
@@ -197,39 +202,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lane_definition_rejects_ambiguous_values() {
+    fn marker_section_definition_rejects_ambiguous_values() {
         assert!(matches!(
-            LaneDefinition::try_new("goal", "Goals"),
-            Err(LaneDefinitionError::InvalidMarker { .. })
+            MarkerSectionDefinition::try_new("goal", "Goals"),
+            Err(MarkerSectionDefinitionError::InvalidMarker { .. })
         ));
         assert!(matches!(
-            LaneDefinition::try_new("/g", " Goals"),
-            Err(LaneDefinitionError::UntrimmedHeader { .. })
+            MarkerSectionDefinition::try_new("/g", " Goals"),
+            Err(MarkerSectionDefinitionError::UntrimmedHeader { .. })
         ));
         assert!(matches!(
-            LaneDefinition::try_new("/g", "Goals\nLater"),
-            Err(LaneDefinitionError::MultilineHeader { .. })
+            MarkerSectionDefinition::try_new("/g", "Goals\nLater"),
+            Err(MarkerSectionDefinitionError::MultilineHeader { .. })
         ));
     }
 
     #[test]
     fn configuration_rejects_duplicate_markers_and_headers() {
         let duplicate_marker = [
-            LaneDefinition::try_new("/g", "Goals").unwrap(),
-            LaneDefinition::try_new("/g", "Context").unwrap(),
+            MarkerSectionDefinition::try_new("/g", "Goals").unwrap(),
+            MarkerSectionDefinition::try_new("/g", "Context").unwrap(),
         ];
         assert!(matches!(
-            LaneConfiguration::try_new(duplicate_marker),
-            Err(LaneConfigurationError::DuplicateMarker { .. })
+            MarkerSectionConfiguration::try_new(duplicate_marker),
+            Err(MarkerSectionConfigurationError::DuplicateMarker { .. })
         ));
 
         let duplicate_header = [
-            LaneDefinition::try_new("/g", "Goals").unwrap(),
-            LaneDefinition::try_new("/c", "Goals").unwrap(),
+            MarkerSectionDefinition::try_new("/g", "Goals").unwrap(),
+            MarkerSectionDefinition::try_new("/c", "Goals").unwrap(),
         ];
         assert!(matches!(
-            LaneConfiguration::try_new(duplicate_header),
-            Err(LaneConfigurationError::DuplicateHeader { .. })
+            MarkerSectionConfiguration::try_new(duplicate_header),
+            Err(MarkerSectionConfigurationError::DuplicateHeader { .. })
         ));
     }
 }

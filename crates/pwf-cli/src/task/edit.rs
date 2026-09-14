@@ -1,8 +1,8 @@
 use clap::{ArgGroup, Args};
 use pwf_client::{
     pb::{
-        self, AppendTaskPrompt, ClearField, StringCollectionEdit, StructuredTaskEdit,
-        TaskContentEdit, TaskLane, UpdateTaskRequest, effort_edit, priority_edit,
+        self, AppendTaskBody, ClearField, StringCollectionEdit, StructuredTaskEdit,
+        TaskContentEdit, TaskMarkerSection, UpdateTaskRequest, effort_edit, priority_edit,
         task_content_edit,
     },
     task::TaskClient,
@@ -13,30 +13,30 @@ use pwf_models::{
 };
 
 use super::{
-    EffortChoice, Identifier, LaneFlagMode, PriorityChoice,
+    EffortChoice, Identifier, MarkerSectionFlagMode, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
     render::{TITLE_NORMALIZED_NOTICE, TaskMutationAction, render_mutation},
-    task_lanes, task_title,
+    task_marker_sections, task_title,
 };
 use crate::{console::Console, edit::string_collection_edit};
 
 const EDIT: &str = "task_edit";
-const LANES: &str = "task_lane_edits";
-const LANE_GROUPS: [&str; 2] = [EDIT, LANES];
+const MARKER_SECTIONS: &str = "task_marker_section_edits";
+const MARKER_SECTION_GROUPS: [&str; 2] = [EDIT, MARKER_SECTIONS];
 
 #[derive(Args, Debug)]
 #[command(group(ArgGroup::new(EDIT).required(true).multiple(true)))]
-#[command(group(ArgGroup::new(LANES).multiple(true).conflicts_with_all(["prompt", "append"])))]
+#[command(group(ArgGroup::new(MARKER_SECTIONS).multiple(true).conflicts_with_all(["body", "append"])))]
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
-    /// Replace the title and every prompt lane using shorthand lane syntax.
+    /// Replace the title and every marker section using shorthand body syntax.
     #[arg(long, group = EDIT, conflicts_with_all = ["title", "append"])]
-    pub(crate) prompt: Option<String>,
+    pub(crate) body: Option<String>,
     /// Replace the title. The normalized title cannot exceed 200 characters.
     #[arg(long, group = EDIT)]
     pub(crate) title: Option<String>,
-    /// Append shorthand lane content without changing the title.
+    /// Append shorthand marker-section content without changing the title.
     #[arg(short = 'a', long, group = EDIT)]
     pub(crate) append: Option<String>,
     #[command(flatten)]
@@ -60,47 +60,47 @@ pub struct Arguments {
 #[derive(Args, Debug)]
 struct GoalEdits {
     /// Append a Goal bullet; repeat for several.
-    #[arg(long, groups = LANE_GROUPS)]
+    #[arg(long, groups = MARKER_SECTION_GROUPS)]
     add_goal: Vec<String>,
     /// Remove every Goal before applying `--add-goal` values.
-    #[arg(long, groups = LANE_GROUPS)]
+    #[arg(long, groups = MARKER_SECTION_GROUPS)]
     remove_goals: bool,
 }
 
 #[derive(Args, Debug)]
 struct ContextEdits {
     /// Append a Context bullet; repeat for several.
-    #[arg(long, groups = LANE_GROUPS)]
+    #[arg(long, groups = MARKER_SECTION_GROUPS)]
     add_context: Vec<String>,
     /// Remove every Context before applying `--add-context` values.
-    #[arg(long, groups = LANE_GROUPS)]
+    #[arg(long, groups = MARKER_SECTION_GROUPS)]
     remove_contexts: bool,
 }
 
 #[derive(Args, Debug)]
 struct ConstraintEdits {
     /// Append a Constraint bullet; repeat for several.
-    #[arg(long, groups = LANE_GROUPS)]
+    #[arg(long, groups = MARKER_SECTION_GROUPS)]
     add_constraint: Vec<String>,
     /// Remove every Constraint before applying `--add-constraint` values.
-    #[arg(long, groups = LANE_GROUPS)]
+    #[arg(long, groups = MARKER_SECTION_GROUPS)]
     remove_constraints: bool,
 }
 
 #[derive(Args, Debug)]
 struct DoneWhenEdits {
     /// Append a Done When bullet; repeat for several.
-    #[arg(long, groups = LANE_GROUPS)]
+    #[arg(long, groups = MARKER_SECTION_GROUPS)]
     add_done_when: Vec<String>,
     /// Remove every Done When before applying `--add-done-when` values.
-    #[arg(long, groups = LANE_GROUPS)]
+    #[arg(long, groups = MARKER_SECTION_GROUPS)]
     remove_done_whens: bool,
 }
 
 #[derive(Args, Debug)]
 struct BlockedByEdits {
     /// Append a blocked-by task ID or [[ID]]; repeat or comma-separate for several.
-    #[arg(long, group = EDIT)]
+    #[arg(short = 'b', long, group = EDIT)]
     add_blocked_by: Vec<BlockedByInput>,
     /// Remove every blocked-by task before applying `--add-blocked-by` values.
     #[arg(long, group = EDIT)]
@@ -121,7 +121,7 @@ impl BlockedByEdits {
 #[derive(Args, Debug)]
 struct TagEdits {
     /// Append a discovery tag; repeat or comma-separate for several.
-    #[arg(long, group = EDIT, allow_hyphen_values = true)]
+    #[arg(short = 't', long, group = EDIT, allow_hyphen_values = true)]
     add_tag: Vec<TagInput>,
     /// Remove every tag before applying `--add-tag` values.
     #[arg(long, group = EDIT)]
@@ -143,7 +143,7 @@ impl TagEdits {
 #[group(multiple = false)]
 struct EffortEdit {
     /// Replace the effort tier.
-    #[arg(long, value_enum, group = EDIT)]
+    #[arg(short = 'e', long, value_enum, group = EDIT)]
     effort: Option<EffortChoice>,
     /// Remove the effort tier.
     #[arg(long, group = EDIT)]
@@ -171,7 +171,7 @@ impl EffortEdit {
 #[group(multiple = false)]
 struct PriorityEdit {
     /// Replace the priority tier.
-    #[arg(long, value_enum, group = EDIT)]
+    #[arg(short = 'p', long, value_enum, group = EDIT)]
     priority: Option<PriorityChoice>,
     /// Remove the priority tier.
     #[arg(long, group = EDIT)]
@@ -240,43 +240,46 @@ fn content_edit(
     arguments: &Arguments,
     title: Option<&TaskTitle>,
 ) -> anyhow::Result<Option<TaskContentEdit>> {
-    let additions = task_lanes(
+    let additions = task_marker_sections(
         &arguments.goals.add_goal,
         &arguments.contexts.add_context,
         &arguments.constraints.add_constraint,
         &arguments.done_whens.add_done_when,
-        LaneFlagMode::Edit,
+        MarkerSectionFlagMode::Edit,
     )?;
     let removals = [
-        arguments.goals.remove_goals.then_some(TaskLane::Goal),
+        arguments
+            .goals
+            .remove_goals
+            .then_some(TaskMarkerSection::Goal),
         arguments
             .contexts
             .remove_contexts
-            .then_some(TaskLane::Context),
+            .then_some(TaskMarkerSection::Context),
         arguments
             .constraints
             .remove_constraints
-            .then_some(TaskLane::Constraint),
+            .then_some(TaskMarkerSection::Constraint),
         arguments
             .done_whens
             .remove_done_whens
-            .then_some(TaskLane::DoneWhen),
+            .then_some(TaskMarkerSection::DoneWhen),
     ]
     .into_iter()
     .flatten();
-    let removals = removals.map(|lane| lane as i32).collect::<Vec<_>>();
-    let content = if let Some(prompt) = arguments.prompt.as_ref() {
+    let removals = removals.map(|section| section as i32).collect::<Vec<_>>();
+    let content = if let Some(body) = arguments.body.as_ref() {
         Some(TaskContentEdit {
-            content: Some(task_content_edit::Content::Replace(prompt.clone())),
+            content: Some(task_content_edit::Content::Replace(body.clone())),
         })
-    } else if let Some(prompt) = arguments.append.as_ref() {
-        if prompt.trim().is_empty() {
+    } else if let Some(body) = arguments.append.as_ref() {
+        if body.trim().is_empty() {
             return Err(anyhow::anyhow!("--append cannot be empty."));
         }
         Some(TaskContentEdit {
-            content: Some(task_content_edit::Content::Append(AppendTaskPrompt {
+            content: Some(task_content_edit::Content::Append(AppendTaskBody {
                 title: title.map(ToString::to_string),
-                prompt: prompt.clone(),
+                body: body.clone(),
             })),
         })
     } else if title.is_some()

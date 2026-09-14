@@ -1,8 +1,8 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use pwf_application::ports::task_vault::{
-    NewTask, NullablePatch, TaskDependencyRecord, TaskGraphRecord, TaskMutationError, TaskPatch,
-    TaskSummaryRecord, TaskVault, TaskWriteSet,
+    NullablePatch, TaskDependencyRecord, TaskGraphRecord, TaskInsertion, TaskMutationError,
+    TaskPatch, TaskSummaryRecord, TaskVault, TaskWriteSet,
 };
 use pwf_models::{
     project::Project,
@@ -13,7 +13,7 @@ use pwf_wire::{
     task::{RawTaskTags, TaskFilePath, TaskRecord},
 };
 
-use super::{ObsidianStore, ObsidianStoreError, add::NewNoteRequest};
+use super::{ObsidianStore, ObsidianStoreError};
 use crate::{
     file_transaction::content_revision,
     obsidian::{
@@ -171,25 +171,6 @@ impl TaskFileMetadata {
             revision,
         }
     }
-}
-
-fn record_from_source(
-    id: TaskId,
-    path: &Path,
-    title: Option<String>,
-    source: String,
-) -> Result<TaskRecord, ObsidianStoreError> {
-    let file = MarkdownFile::from_source(path, source);
-    let frontmatter = file
-        .frontmatter_view()
-        .map_err(read_task_file_error)?
-        .ok_or_else(|| ObsidianStoreError::MissingFrontmatter {
-            path: path.to_path_buf(),
-            property: "id",
-        })?;
-    let metadata = task_file_metadata(id, title, &file, &frontmatter)?;
-    drop(frontmatter);
-    Ok(metadata.into_record(file))
 }
 
 fn get_task_record(
@@ -454,35 +435,12 @@ impl TaskVault for ObsidianStore {
         list_task_records(self, project)
     }
 
-    fn next_task_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
-        ObsidianStore::next_task_id(self, project)
+    fn highest_task_id(&self, project: &Project) -> Result<Option<TaskId>, Self::Error> {
+        ObsidianStore::highest_task_id(self, project)
     }
 
-    fn insert_task(
-        &self,
-        project: &Project,
-        id: &TaskId,
-        new: NewTask,
-    ) -> Result<TaskRecord, Self::Error> {
-        let note = self.write_new_note(
-            project,
-            &NewNoteRequest {
-                id,
-                body: &new.body,
-                title: &new.title,
-                created_at: &new.created_at,
-                blocked_by: new.blocked_by.as_ref(),
-                effort: new.effort,
-                priority: new.priority,
-                tags: new.tags.as_ref(),
-            },
-        )?;
-        record_from_source(
-            note.id,
-            &note.path,
-            Some(note.title.to_string()),
-            note.content,
-        )
+    fn insert_task(&self, insertion: TaskInsertion<'_>) -> Result<(), Self::Error> {
+        self.write_new_note(insertion)
     }
 
     fn commit_task_writes(

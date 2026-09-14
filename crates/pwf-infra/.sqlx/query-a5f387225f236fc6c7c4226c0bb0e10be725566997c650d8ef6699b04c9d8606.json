@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT title FROM projects WHERE (? OR paused_at IS NULL) ORDER BY title ASC",
+  "query": "SELECT last_task_number FROM projects WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "title",
+        "name": "last_task_number",
         "ordinal": 0,
-        "type_info": "Text",
+        "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "projects",
-            "name": "title"
+            "name": "last_task_number"
           }
         }
       }
@@ -19,8 +19,8 @@
       "Right": 1
     },
     "nullable": [
-      false
+      true
     ]
   },
-  "hash": "79b0a42cedc5c01f7365d8e629bc08699f101d9917c46f9358833b74ba5dfebf"
+  "hash": "a5f387225f236fc6c7c4226c0bb0e10be725566997c650d8ef6699b04c9d8606"
 }

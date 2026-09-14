@@ -7,8 +7,8 @@ use pwf_models::{
     project::Project,
     revision::ContentRevision,
     task::{
-        BlockedBy, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskStatus, TaskTags,
-        TaskTimestamp, TaskTitle,
+        BlockedBy, EffortTier, PriorityTier, TaskBody, TaskId, TaskStatus, TaskTags, TaskTimestamp,
+        TaskTitle,
     },
 };
 use pwf_wire::{
@@ -70,7 +70,7 @@ pub trait TaskGraphSnapshot: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewTaskBody {
     Rendered(String),
-    Verbatim(TaskPrompt),
+    Verbatim(TaskBody),
 }
 
 impl AsRef<str> for NewTaskBody {
@@ -106,6 +106,25 @@ pub struct NewTask {
     pub effort: Option<EffortTier>,
     pub priority: Option<PriorityTier>,
     pub tags: Option<TaskTags>,
+}
+
+/// A task insertion prepared by an interactor after identity and dependency checks.
+pub struct TaskInsertion<'a> {
+    project: &'a Project,
+    id: &'a TaskId,
+    task: NewTask,
+}
+
+impl<'a> TaskInsertion<'a> {
+    #[must_use]
+    pub fn new(project: &'a Project, id: &'a TaskId, task: NewTask) -> Self {
+        Self { project, id, task }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (&'a Project, &'a TaskId, NewTask) {
+        (self.project, self.id, self.task)
+    }
 }
 
 /// Selects how a patch changes one nullable field.
@@ -353,13 +372,8 @@ pub trait TaskVault: Send + Sync + 'static {
         self.list_tasks(project)
             .map(|records| records.into_iter().map(TaskSummaryRecord::from).collect())
     }
-    fn next_task_id(&self, project: &Project) -> Result<TaskId, Self::Error>;
-    fn insert_task(
-        &self,
-        project: &Project,
-        id: &TaskId,
-        new: NewTask,
-    ) -> Result<TaskRecord, Self::Error>;
+    fn highest_task_id(&self, project: &Project) -> Result<Option<TaskId>, Self::Error>;
+    fn insert_task(&self, insertion: TaskInsertion<'_>) -> Result<(), Self::Error>;
     fn commit_task_writes(
         &self,
         project: &Project,

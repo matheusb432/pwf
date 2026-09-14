@@ -188,18 +188,6 @@ pub struct GetProjectResponse {
     pub snapshot_enabled: bool,
 }
 /// Resolves an exact case-insensitive title before trying the normalized project ID.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ResolveProjectRequest {
-    #[prost(string, tag = "1")]
-    pub selector: ::prost::alloc::string::String,
-    #[prost(enumeration = "ProjectStatusFilter", tag = "2")]
-    pub status: i32,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ResolveProjectResponse {
-    #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
-}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListProjectsRequest {
     #[prost(enumeration = "ProjectStatusFilter", tag = "1")]
@@ -439,7 +427,7 @@ pub mod delete_note_response {
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TaskLanes {
+pub struct TaskMarkerSections {
     #[prost(string, repeated, tag = "1")]
     pub goals: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "2")]
@@ -450,11 +438,11 @@ pub struct TaskLanes {
     pub done_when: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct StructuredTaskPrompt {
+pub struct StructuredTaskBody {
     #[prost(string, tag = "1")]
     pub title: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]
-    pub lanes: ::core::option::Option<TaskLanes>,
+    pub sections: ::core::option::Option<TaskMarkerSections>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateTaskRequest {
@@ -468,17 +456,17 @@ pub struct CreateTaskRequest {
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "PriorityTier", optional, tag = "8")]
     pub priority: ::core::option::Option<i32>,
-    #[prost(oneof = "create_task_request::Prompt", tags = "2, 3")]
-    pub prompt: ::core::option::Option<create_task_request::Prompt>,
+    #[prost(oneof = "create_task_request::Body", tags = "2, 3")]
+    pub body: ::core::option::Option<create_task_request::Body>,
 }
 /// Nested message and enum types in `CreateTaskRequest`.
 pub mod create_task_request {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Prompt {
+    pub enum Body {
         #[prost(string, tag = "2")]
         Shorthand(::prost::alloc::string::String),
         #[prost(message, tag = "3")]
-        Structured(super::StructuredTaskPrompt),
+        Structured(super::StructuredTaskBody),
     }
 }
 /// Creates an active task with the source title, body, tags, tiers, and blockers.
@@ -577,17 +565,17 @@ pub struct StructuredTaskEdit {
     #[prost(string, optional, tag = "1")]
     pub title: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "2")]
-    pub additions: ::core::option::Option<TaskLanes>,
-    #[prost(enumeration = "TaskLane", repeated, tag = "3")]
+    pub additions: ::core::option::Option<TaskMarkerSections>,
+    #[prost(enumeration = "TaskMarkerSection", repeated, tag = "3")]
     pub removals: ::prost::alloc::vec::Vec<i32>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct AppendTaskPrompt {
+pub struct AppendTaskBody {
     /// Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
     #[prost(string, optional, tag = "1")]
     pub title: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "2")]
-    pub prompt: ::prost::alloc::string::String,
+    pub body: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskContentEdit {
@@ -601,7 +589,7 @@ pub mod task_content_edit {
         #[prost(message, tag = "1")]
         Structured(super::StructuredTaskEdit),
         #[prost(message, tag = "2")]
-        Append(super::AppendTaskPrompt),
+        Append(super::AppendTaskBody),
         #[prost(string, tag = "3")]
         Replace(::prost::alloc::string::String),
     }
@@ -815,7 +803,7 @@ pub struct Task {
     #[prost(enumeration = "TaskStatus", tag = "3")]
     pub status: i32,
     #[prost(string, tag = "4")]
-    pub prompt: ::prost::alloc::string::String,
+    pub body: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "5")]
     pub created_at: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
@@ -927,7 +915,7 @@ pub struct ListedTask {
     #[prost(string, tag = "4")]
     pub heading: ::prost::alloc::string::String,
     #[prost(string, tag = "5")]
-    pub prompt: ::prost::alloc::string::String,
+    pub body: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "6")]
     pub project_path: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "17")]
@@ -1377,35 +1365,35 @@ impl NoteListLimitKind {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum TaskLane {
+pub enum TaskMarkerSection {
     Unspecified = 0,
     Goal = 1,
     Context = 2,
     Constraint = 3,
     DoneWhen = 4,
 }
-impl TaskLane {
+impl TaskMarkerSection {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            Self::Unspecified => "TASK_LANE_UNSPECIFIED",
-            Self::Goal => "TASK_LANE_GOAL",
-            Self::Context => "TASK_LANE_CONTEXT",
-            Self::Constraint => "TASK_LANE_CONSTRAINT",
-            Self::DoneWhen => "TASK_LANE_DONE_WHEN",
+            Self::Unspecified => "TASK_MARKER_SECTION_UNSPECIFIED",
+            Self::Goal => "TASK_MARKER_SECTION_GOAL",
+            Self::Context => "TASK_MARKER_SECTION_CONTEXT",
+            Self::Constraint => "TASK_MARKER_SECTION_CONSTRAINT",
+            Self::DoneWhen => "TASK_MARKER_SECTION_DONE_WHEN",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
-            "TASK_LANE_UNSPECIFIED" => Some(Self::Unspecified),
-            "TASK_LANE_GOAL" => Some(Self::Goal),
-            "TASK_LANE_CONTEXT" => Some(Self::Context),
-            "TASK_LANE_CONSTRAINT" => Some(Self::Constraint),
-            "TASK_LANE_DONE_WHEN" => Some(Self::DoneWhen),
+            "TASK_MARKER_SECTION_UNSPECIFIED" => Some(Self::Unspecified),
+            "TASK_MARKER_SECTION_GOAL" => Some(Self::Goal),
+            "TASK_MARKER_SECTION_CONTEXT" => Some(Self::Context),
+            "TASK_MARKER_SECTION_CONSTRAINT" => Some(Self::Constraint),
+            "TASK_MARKER_SECTION_DONE_WHEN" => Some(Self::DoneWhen),
             _ => None,
         }
     }
@@ -1720,7 +1708,7 @@ impl BlockedByResolutionKind {
 #[repr(i32)]
 pub enum TaskIssueKind {
     Unspecified = 0,
-    PlaceholderPrompt = 2,
+    PlaceholderBody = 2,
 }
 impl TaskIssueKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1730,14 +1718,14 @@ impl TaskIssueKind {
     pub fn as_str_name(&self) -> &'static str {
         match self {
             Self::Unspecified => "TASK_ISSUE_KIND_UNSPECIFIED",
-            Self::PlaceholderPrompt => "TASK_ISSUE_KIND_PLACEHOLDER_PROMPT",
+            Self::PlaceholderBody => "TASK_ISSUE_KIND_PLACEHOLDER_BODY",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
             "TASK_ISSUE_KIND_UNSPECIFIED" => Some(Self::Unspecified),
-            "TASK_ISSUE_KIND_PLACEHOLDER_PROMPT" => Some(Self::PlaceholderPrompt),
+            "TASK_ISSUE_KIND_PLACEHOLDER_BODY" => Some(Self::PlaceholderBody),
             _ => None,
         }
     }
@@ -1990,30 +1978,6 @@ pub mod project_service_client {
                 .insert(GrpcMethod::new("pwf.v1.ProjectService", "GetProject"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn resolve_project(
-            &mut self,
-            request: impl tonic::IntoRequest<super::ResolveProjectRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::ResolveProjectResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/pwf.v1.ProjectService/ResolveProject",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("pwf.v1.ProjectService", "ResolveProject"));
-            self.inner.unary(req, path, codec).await
-        }
         pub async fn list_projects(
             &mut self,
             request: impl tonic::IntoRequest<super::ListProjectsRequest>,
@@ -2168,13 +2132,6 @@ pub mod project_service_server {
             request: tonic::Request<super::GetProjectRequest>,
         ) -> std::result::Result<
             tonic::Response<super::GetProjectResponse>,
-            tonic::Status,
-        >;
-        async fn resolve_project(
-            &self,
-            request: tonic::Request<super::ResolveProjectRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::ResolveProjectResponse>,
             tonic::Status,
         >;
         async fn list_projects(
@@ -2410,52 +2367,6 @@ pub mod project_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetProjectSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/pwf.v1.ProjectService/ResolveProject" => {
-                    #[allow(non_camel_case_types)]
-                    struct ResolveProjectSvc<T: ProjectService>(pub Arc<T>);
-                    impl<
-                        T: ProjectService,
-                    > tonic::server::UnaryService<super::ResolveProjectRequest>
-                    for ResolveProjectSvc<T> {
-                        type Response = super::ResolveProjectResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::ResolveProjectRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ProjectService>::resolve_project(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = ResolveProjectSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

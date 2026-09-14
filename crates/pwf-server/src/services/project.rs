@@ -6,7 +6,6 @@ use pwf_application::project::{
     list_projects::{self, ListProjectsError},
     pause_project::{self, PauseProjectError},
     rename_project::{self, RenameProjectError},
-    resolve_project::{self, ResolveProjectError},
     resume_project::{self, ResumeProjectError},
     update_project::{self, UpdateProjectError},
 };
@@ -38,7 +37,7 @@ impl ProjectService for ProjectGrpcService {
         let command = proto::project::add_vault_project_request(request.into_inner())?;
         add_vault_project::execute(
             command,
-            &self.state.pool,
+            &self.state.projects,
             &self.state.home,
             &self.state.project_directory,
         )
@@ -61,7 +60,7 @@ impl ProjectService for ProjectGrpcService {
         request: Request<pb::AddProjectRequest>,
     ) -> Result<Response<pb::AddProjectResponse>, Status> {
         let fields = proto::project::add_project_request(request.into_inner())?;
-        add_project::execute(fields, &self.state.pool, &self.state.home)
+        add_project::execute(fields, &self.state.projects, &self.state.home)
             .await
             .map(proto::project::add_project_response)
             .map(Response::new)
@@ -73,30 +72,11 @@ impl ProjectService for ProjectGrpcService {
         request: Request<pb::GetProjectRequest>,
     ) -> Result<Response<pb::GetProjectResponse>, Status> {
         let query = proto::project::get_project_request(request.into_inner())?;
-        get_project::execute(query, &self.state.pool)
+        get_project::execute(query, &self.state.projects)
             .await
             .map(proto::project::get_project_response)
             .map(Response::new)
             .map_err(|error| get_project_status(&error))
-    }
-
-    async fn resolve_project(
-        &self,
-        request: Request<pb::ResolveProjectRequest>,
-    ) -> Result<Response<pb::ResolveProjectResponse>, Status> {
-        let query = request.into_inner().try_into()?;
-        resolve_project::execute(query, &self.state.pool)
-            .await
-            .map(Into::into)
-            .map(Response::new)
-            .map_err(|error| match error {
-                ResolveProjectError::ProjectNotFound { .. } => Status::not_found(error.to_string()),
-                ResolveProjectError::InvalidProjectId(_) => Status::data_loss(error.to_string()),
-                ResolveProjectError::Database(_) => {
-                    tracing::error!(error = ?error, "project resolution failed");
-                    Status::internal("resolving managed project failed")
-                }
-            })
     }
 
     async fn list_projects(
@@ -104,7 +84,7 @@ impl ProjectService for ProjectGrpcService {
         request: Request<pb::ListProjectsRequest>,
     ) -> Result<Response<pb::ListProjectsResponse>, Status> {
         let status = proto::project::list_projects_request(request.into_inner())?;
-        list_projects::execute(status, &self.state.pool)
+        list_projects::execute(status, &self.state.projects)
             .await
             .map(proto::project::list_projects_response)
             .map(Response::new)
@@ -116,7 +96,7 @@ impl ProjectService for ProjectGrpcService {
         request: Request<pb::PauseProjectRequest>,
     ) -> Result<Response<pb::PauseProjectResponse>, Status> {
         let project_id = proto::project::pause_project_request(request.into_inner())?;
-        pause_project::execute(project_id, &self.state.pool)
+        pause_project::execute(project_id, &self.state.projects)
             .await
             .map(proto::project::pause_project_response)
             .map(Response::new)
@@ -130,7 +110,7 @@ impl ProjectService for ProjectGrpcService {
         let command = proto::project::rename_project_request(request.into_inner())?;
         rename_project::execute(
             command,
-            &self.state.pool,
+            &self.state.projects,
             &ObsidianProjectTaskFilesClient,
             &self.state.home,
         )
@@ -145,7 +125,7 @@ impl ProjectService for ProjectGrpcService {
         request: Request<pb::ResumeProjectRequest>,
     ) -> Result<Response<pb::ResumeProjectResponse>, Status> {
         let project_id = proto::project::resume_project_request(request.into_inner())?;
-        resume_project::execute(project_id, &self.state.pool, &self.state.home)
+        resume_project::execute(project_id, &self.state.projects, &self.state.home)
             .await
             .map(proto::project::resume_project_response)
             .map(Response::new)
@@ -157,7 +137,7 @@ impl ProjectService for ProjectGrpcService {
         request: Request<pb::UpdateProjectRequest>,
     ) -> Result<Response<pb::UpdateProjectResponse>, Status> {
         let command = proto::project::update_project_request(request.into_inner())?;
-        update_project::execute(command, &self.state.pool)
+        update_project::execute(command, &self.state.projects)
             .await
             .map(|()| proto::project::update_project_response())
             .map(Response::new)

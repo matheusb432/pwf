@@ -36,9 +36,14 @@ async fn cancel_marks_item_cancelled(pool: sqlx::SqlitePool) {
         expected_revision: None,
     };
 
-    cancel_task::execute(&command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    cancel_task::execute(
+        &command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Cancelled);
     assert_eq!(
@@ -70,9 +75,14 @@ async fn cancel_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
         expected_revision: None,
     };
 
-    cancel_task::execute(&command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    cancel_task::execute(
+        &command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         store.tasks("foo-bar")[0].completed_at,
@@ -98,9 +108,14 @@ async fn cancel_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
         expected_revision: None,
     };
 
-    let error = cancel_task::execute(&command, &staged(), &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = cancel_task::execute(
+        &command,
+        &staged(),
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(
         error.to_string(),

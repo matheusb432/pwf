@@ -8,7 +8,10 @@ use super::{
     commit_task_writes, expected_task_revision,
     get_task_record::{self, GetTaskRecordError, LoadedTaskRecord},
 };
-use crate::ports::task_vault::{TaskMutationError, TaskPatch, TaskVault, TaskWrite};
+use crate::ports::{
+    project_store::ProjectStore,
+    task_vault::{TaskMutationError, TaskPatch, TaskVault, TaskWrite},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BacklogTaskError {
@@ -24,9 +27,10 @@ pub enum BacklogTaskError {
 pub async fn execute(
     id: &TaskId,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<TaskMutationResult<BacklogTaskOutcome>, BacklogTaskError> {
-    let LoadedTaskRecord { project, record } = get_task_record::load(id, store, pool).await?;
+    let LoadedTaskRecord { project, record } =
+        get_task_record::load(id, store, project_store).await?;
     if record.status.is_closed() {
         return Err(BacklogTaskError::ClosedTask { id: id.clone() });
     }

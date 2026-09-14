@@ -168,13 +168,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_sequence_upgrade_preserves_projects_and_enforces_its_range() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        MIGRATOR.run_to(1, &pool).await.unwrap();
+        sqlx::query("INSERT INTO projects (id, title, tasks_kind, tasks_path) VALUES ('FOO', 'foo', 'directory', '/tasks/foo')").execute(&pool).await.unwrap();
+        migrate_database(&pool).await.unwrap();
+        let row: (String, Option<i64>) =
+            sqlx::query_as("SELECT title, last_task_number FROM projects WHERE id = 'FOO'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row, ("foo".into(), None));
+        for number in [-1, 10000] {
+            assert!(
+                sqlx::query("UPDATE projects SET last_task_number = ? WHERE id = 'FOO'")
+                    .bind(number)
+                    .execute(&pool)
+                    .await
+                    .is_err()
+            );
+        }
+        sqlx::query("UPDATE projects SET last_task_number = 9999 WHERE id = 'FOO'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        migrate_database(&pool).await.unwrap();
+        let number: i64 =
+            sqlx::query_scalar("SELECT last_task_number FROM projects WHERE id = 'FOO'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(number, 9999);
+    }
+
+    #[tokio::test]
+    async fn migrated_schema_matches_snapshot() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        migrate_database(&pool).await.unwrap();
+        let statements: Vec<String> = sqlx::query_scalar("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL AND name != '_sqlx_migrations' ORDER BY type, name").fetch_all(&pool).await.unwrap();
+        let actual = statements
+            .into_iter()
+            .map(|sql| format!("{sql};"))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+            + "\n";
+        assert_eq!(actual, include_str!("../../schema.sql"));
+    }
+
+    #[tokio::test]
     async fn initial_schema_is_a_compatible_pending_upgrade() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         MIGRATOR.run_to(0, &pool).await.unwrap();
 
         assert!(matches!(
             check_database_compatible(&pool).await.unwrap(),
-            MigrationCompatibility::Compatible { pending: 1 }
+            MigrationCompatibility::Compatible { pending: 3 }
         ));
         assert!(check_database_ready(&pool).await.is_err());
         let versions = read_migrations(&mut pool.acquire().await.unwrap())

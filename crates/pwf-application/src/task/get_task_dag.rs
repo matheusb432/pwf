@@ -10,7 +10,10 @@ use pwf_wire::{
 };
 
 use crate::{
-    ports::task_vault::{TaskGraphRecord, TaskGraphSnapshot, TaskVault},
+    ports::{
+        project_store::ProjectStore,
+        task_vault::{TaskGraphRecord, TaskGraphSnapshot, TaskVault},
+    },
     project::{
         get_project::{self, GetProjectError},
         list_projects,
@@ -55,11 +58,11 @@ pub enum GetTaskDagError {
 pub async fn execute(
     query: &GetTaskDag,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<TaskDag, GetTaskDagError> {
     let root_project = get_project::execute(
         GetProject::new(query.id.project_id(), ProjectStatusFilter::IncludingPaused),
-        pool,
+        project_store,
     )
     .await
     .map_err(|error| match error {
@@ -91,7 +94,7 @@ pub async fn execute(
 
     let mut resolver = Resolver {
         store,
-        pool,
+        project_store,
         projects: BTreeMap::new(),
     };
     resolver
@@ -119,19 +122,19 @@ enum ProjectRead<Snapshot> {
     Unavailable,
 }
 
-struct Resolver<'a, Store: TaskVault> {
+struct Resolver<'a, Store: TaskVault, Projects: ProjectStore> {
     store: &'a Store,
-    pool: &'a sqlx::SqlitePool,
+    project_store: &'a Projects,
     projects: BTreeMap<ProjectId, ProjectRead<Store::GraphSnapshot>>,
 }
 
-impl<Store: TaskVault> Resolver<'_, Store> {
+impl<Store: TaskVault, Projects: ProjectStore> Resolver<'_, Store, Projects> {
     async fn resolve(&mut self, id: &TaskId) -> Result<ResolvedTask, GetTaskDagError> {
         let project_id = id.project_id();
         if !self.projects.contains_key(project_id) {
             match get_project::execute(
                 GetProject::new(project_id, ProjectStatusFilter::IncludingPaused),
-                self.pool,
+                self.project_store,
             )
             .await
             {
@@ -165,9 +168,10 @@ impl<Store: TaskVault> Resolver<'_, Store> {
     async fn gather_dependents(
         &mut self,
     ) -> Result<BTreeMap<TaskId, Vec<TaskId>>, GetTaskDagError> {
-        let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, self.pool)
-            .await
-            .map_err(|error| GetTaskDagError::QueryProject(anyhow::Error::new(error)))?;
+        let projects =
+            list_projects::execute(ProjectStatusFilter::IncludingPaused, self.project_store)
+                .await
+                .map_err(|error| GetTaskDagError::QueryProject(anyhow::Error::new(error)))?;
         for project in projects {
             if self.projects.contains_key(&project.id) {
                 continue;
@@ -224,17 +228,17 @@ enum VisitState {
     Complete,
 }
 
-struct Traversal<'a, Store: TaskVault> {
+struct Traversal<'a, Store: TaskVault, Projects: ProjectStore> {
     query: &'a GetTaskDag,
-    resolver: Resolver<'a, Store>,
+    resolver: Resolver<'a, Store, Projects>,
     dependents: Option<BTreeMap<TaskId, Vec<TaskId>>>,
     graph: GraphBuilder,
 }
 
-impl<'a, Store: TaskVault> Traversal<'a, Store> {
+impl<'a, Store: TaskVault, Projects: ProjectStore> Traversal<'a, Store, Projects> {
     fn new(
         query: &'a GetTaskDag,
-        resolver: Resolver<'a, Store>,
+        resolver: Resolver<'a, Store, Projects>,
         dependents: Option<BTreeMap<TaskId, Vec<TaskId>>>,
         root: &TaskGraphRecord,
     ) -> Self {

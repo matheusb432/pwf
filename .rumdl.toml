@@ -1,0 +1,39 @@
+[global]
+disable = [
+  "MD001",
+  "MD018",
+  "MD024",
+  "MD025",
+  "MD026",
+  "MD033",
+  "MD036",
+  "MD040",
+  "MD041",
+]
+exclude = [
+  ".git",
+  ".artifacts",
+  ".rumdl_cache",
+  ".worktrees",
+  "target",
+  "wiki",
+]
+
+[MD013]
+code-blocks = false
+code-spans = false
+line-length = 100
+reflow = true
+
+[MD046]
+style = "fenced"
+
+[MD049]
+style = "asterisk"
+
+[MD050]
+style = "asterisk"
+
+[MD060]
+enabled = true
+style = "compact"

@@ -10,7 +10,12 @@ async fn referenced_projects_include_paused_and_skip_missing_ids(pool: sqlx::Sql
     let ids = ["FOO", "AUX", "MISS", "FOO"]
         .map(|id| id.parse().unwrap())
         .into();
-    let projects = get_projects::execute(&ids, &pool).await.unwrap();
+    let projects = get_projects::execute(
+        &ids,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         projects
             .iter()
@@ -20,9 +25,12 @@ async fn referenced_projects_include_paused_and_skip_missing_ids(pool: sqlx::Sql
     );
     assert!(projects[0].is_paused);
     assert!(
-        get_projects::execute(&std::collections::BTreeSet::new(), &pool)
-            .await
-            .unwrap()
-            .is_empty()
+        get_projects::execute(
+            &std::collections::BTreeSet::new(),
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone())
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
 }

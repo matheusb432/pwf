@@ -1,10 +1,10 @@
 use std::fmt;
 
-/// Stores authored task prompt text without changing its formatting.
+/// Stores authored task body text without changing its formatting.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TaskPrompt(String);
+pub struct TaskBody(String);
 
-impl TaskPrompt {
+impl TaskBody {
     #[must_use]
     pub fn into_string(self) -> String {
         self.0
@@ -21,13 +21,13 @@ impl TaskPrompt {
     }
 }
 
-impl AsRef<str> for TaskPrompt {
+impl AsRef<str> for TaskBody {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
 
-impl fmt::Display for TaskPrompt {
+impl fmt::Display for TaskBody {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }

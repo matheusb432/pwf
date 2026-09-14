@@ -437,7 +437,7 @@ fn listed_task(task: task::ListedTask) -> pb::ListedTask {
         view.created_at = details.created_at.map(|value| value.to_string());
         view.completed_at = details.completed_at.map(|value| value.to_string());
         view.commits = details.commits;
-        view.prompt = details.prompt.to_string();
+        view.body = details.body.to_string();
         view.project_path = details.project_path.map(|path| path.to_string());
         view.file_path = details.file_path.into_display_string();
         view.launch_issues = details.launch.issues().iter().map(task_issue).collect();
@@ -461,8 +461,8 @@ fn listed_task(task: task::ListedTask) -> pb::ListedTask {
 
 fn task_issue(issue: &task::TaskIssue) -> pb::TaskIssue {
     match issue {
-        task::TaskIssue::PlaceholderPrompt => pb::TaskIssue {
-            kind: pb::TaskIssueKind::PlaceholderPrompt as i32,
+        task::TaskIssue::PlaceholderBody => pb::TaskIssue {
+            kind: pb::TaskIssueKind::PlaceholderBody as i32,
         },
     }
 }

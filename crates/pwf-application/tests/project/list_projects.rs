@@ -9,9 +9,12 @@ async fn active_list_filters_paused_projects_and_sorts_by_title(pool: sqlx::Sqli
     insert_project(&pool, "ALP", "alpha", "/work/alpha", "/tasks/alpha", false).await;
     insert_project(&pool, "PAU", "beta", "/work/beta", "/tasks/beta", true).await;
 
-    let projects = list_projects::execute(ProjectStatusFilter::ActiveOnly, &pool)
-        .await
-        .unwrap();
+    let projects = list_projects::execute(
+        ProjectStatusFilter::ActiveOnly,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         projects

@@ -4,8 +4,8 @@ use pwf_models::{
     AppDate,
     project::{ProjectId, ProjectName, ProjectSourceValue},
     task::{
-        BlockedBy, EffortTier, PriorityTier, TaskId, TaskListLimit, TaskPrompt, TaskStatus,
-        TaskTags, TaskTimestamp, TaskTitle, order::OrderSpec,
+        BlockedBy, EffortTier, PriorityTier, TaskBody, TaskId, TaskListLimit, TaskStatus, TaskTags,
+        TaskTimestamp, TaskTitle, order::OrderSpec,
     },
 };
 
@@ -115,14 +115,15 @@ impl fmt::Display for TaskHeading {
 /// Describes one condition preventing task launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskIssue {
-    PlaceholderPrompt,
+    PlaceholderBody,
 }
 
 impl fmt::Display for TaskIssue {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PlaceholderPrompt => formatter
-                .write_str("Prompt is a placeholder; define a real prompt before launching."),
+            Self::PlaceholderBody => {
+                formatter.write_str("Body is a placeholder; define a real body before launching.")
+            }
         }
     }
 }
@@ -145,8 +146,8 @@ impl TaskLaunch {
     }
 
     #[must_use]
-    pub fn needs_prompt(&self) -> bool {
-        self.issues.contains(&TaskIssue::PlaceholderPrompt)
+    pub fn needs_body(&self) -> bool {
+        self.issues.contains(&TaskIssue::PlaceholderBody)
     }
 
     #[must_use]
@@ -187,7 +188,7 @@ pub struct ListedTaskDetails {
     pub created_at: Option<TaskTimestamp>,
     pub completed_at: Option<TaskTimestamp>,
     pub commits: Option<String>,
-    pub prompt: TaskPrompt,
+    pub body: TaskBody,
     pub project_path: Option<ProjectSourceValue>,
     pub file_path: TaskFilePath,
     pub launch: TaskLaunch,

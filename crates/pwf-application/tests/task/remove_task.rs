@@ -1,5 +1,6 @@
 use pwf_application::{
     ports::confirmation::{ConfirmationClient, ConfirmationClientError},
+    project::update_project,
     task::{remove_task, remove_task::RemoveTaskError},
 };
 use pwf_models::task::{TaskId, TaskStatus};
@@ -15,7 +16,7 @@ use crate::support::{
 async fn run(
     task_id: &TaskId,
     store: &InMemoryStore,
-    pool: &sqlx::SqlitePool,
+    projects: &impl pwf_application::ports::project_store::ProjectStore,
     confirmation: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
 ) -> Result<TaskMutationResult<DeleteTaskOutcome>, RemoveTaskError> {
     remove_task::execute(
@@ -23,7 +24,7 @@ async fn run(
             id: task_id.clone(),
         },
         store,
-        pool,
+        projects,
         confirmation,
     )
     .await
@@ -96,7 +97,7 @@ impl ConfirmationClient for StaticInteraction {
 }
 
 struct ChangeVaultThenAccept {
-    pool: sqlx::SqlitePool,
+    projects: pwf_infra::project_store::SqliteProjectStore,
 }
 
 impl ConfirmationClient for ChangeVaultThenAccept {
@@ -111,10 +112,19 @@ impl ConfirmationClient for ChangeVaultThenAccept {
             pwf_wire::confirmation::TaskDeletion::HardDelete
         );
         Box::pin(async move {
-            sqlx::query("UPDATE projects SET obsidian_vault = '/different/vault' WHERE id = 'FOO'")
-                .execute(&self.pool)
-                .await
-                .unwrap();
+            update_project::execute(
+                pwf_wire::project::UpdateProject {
+                    id: "FOO".parse().unwrap(),
+                    source: pwf_wire::patch_field::PatchField::NoAction,
+                    obsidian_vault: pwf_wire::patch_field::PatchField::Set(
+                        pwf_models::project::ObsidianVault::try_new("/different/vault").unwrap(),
+                    ),
+                    snapshot_enabled: pwf_wire::set_field::SetField::NoAction,
+                },
+                &self.projects,
+            )
+            .await
+            .unwrap();
             Ok(true)
         })
     }
@@ -125,11 +135,14 @@ async fn changed_vault_after_confirmation_preserves_the_task(pool: sqlx::SqliteP
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = staged(TaskStatus::Active);
     let before = store.tasks("foo");
+    let projects = pwf_infra::project_store::SqliteProjectStore::new(pool.clone());
     let error = run(
         &task_id("FOO-0001"),
         &store,
-        &pool,
-        &mut ChangeVaultThenAccept { pool: pool.clone() },
+        &projects,
+        &mut ChangeVaultThenAccept {
+            projects: projects.clone(),
+        },
     )
     .await
     .unwrap_err();
@@ -142,9 +155,14 @@ async fn remove_deletes_the_task_file(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = staged(TaskStatus::Active);
 
-    let outcome = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
-        .await
-        .unwrap();
+    let outcome = run(
+        &task_id("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut Accepted,
+    )
+    .await
+    .unwrap();
     assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
     assert!(store.tasks("foo").is_empty(), "record must be deleted");
 }
@@ -160,9 +178,14 @@ async fn remove_rejects_a_task_edited_after_preflight_without_unlinking(pool: sq
         id: id.clone(),
     };
 
-    let error = run(&id, &store, &pool, &mut confirmation)
-        .await
-        .unwrap_err();
+    let error = run(
+        &id,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut confirmation,
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(error, RemoveTaskError::Revision(_)));
     assert_eq!(store.tasks("foo").len(), 1);
@@ -199,9 +222,14 @@ async fn remove_reports_all_dependents_including_paused_projects_without_mutatin
         .with_project("paused-project", vec![paused_dependent]);
     let before = store.tasks("foo");
 
-    let error = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
-        .await
-        .unwrap_err();
+    let error = run(
+        &task_id("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut Accepted,
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(
         error,
@@ -226,9 +254,14 @@ async fn remove_rejects_an_invalid_persisted_title_before_mutation(pool: sqlx::S
             }],
         );
 
-    let error = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
-        .await
-        .unwrap_err();
+    let error = run(
+        &task_id("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut Accepted,
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(error, RemoveTaskError::InvalidTitle { .. }));
     assert_eq!(store.tasks("foo").len(), 1);
@@ -240,9 +273,14 @@ async fn remove_deletes_closed_items(pool: sqlx::SqlitePool) {
     for status in [TaskStatus::Done, TaskStatus::Cancelled] {
         let store = staged(status);
 
-        let outcome = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
-            .await
-            .unwrap();
+        let outcome = run(
+            &task_id("FOO-0001"),
+            &store,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+            &mut Accepted,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
         assert!(store.tasks("foo").is_empty(), "{status} record retained");
@@ -254,9 +292,14 @@ async fn remove_missing_item_preserves_requested_id(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = staged(TaskStatus::Active);
 
-    let error = run(&task_id("FOO-9999"), &store, &pool, &mut Accepted)
-        .await
-        .unwrap_err();
+    let error = run(
+        &task_id("FOO-9999"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut Accepted,
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(
         error,
@@ -269,9 +312,14 @@ async fn remove_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = staged(TaskStatus::Active);
 
-    let error = run(&task_id("XYZ-0001"), &store, &pool, &mut Accepted)
-        .await
-        .unwrap_err();
+    let error = run(
+        &task_id("XYZ-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut Accepted,
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -292,7 +340,7 @@ mod confirmed_removal {
         let outcome = run(
             &task_id("FOO-0001"),
             &store,
-            &pool,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
             &mut StaticInteraction { accepted: true },
         )
         .await
@@ -309,7 +357,7 @@ mod confirmed_removal {
         let outcome = run(
             &task_id("FOO-0001"),
             &store,
-            &pool,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
             &mut StaticInteraction { accepted: false },
         )
         .await
@@ -329,9 +377,14 @@ async fn removal_returns_the_task_summary_and_reports_missing_on_repeat(pool: sq
     let command = DeleteTask {
         id: task_id("FOO-0001"),
     };
-    let removed = remove_task::execute(&command, &store, &pool, &mut Accepted)
-        .await
-        .unwrap();
+    let removed = remove_task::execute(
+        &command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut Accepted,
+    )
+    .await
+    .unwrap();
     assert_eq!(removed.outcome, DeleteTaskOutcome::Deleted);
     assert_eq!(
         removed.task,
@@ -343,8 +396,13 @@ async fn removal_returns_the_task_summary_and_reports_missing_on_repeat(pool: sq
     );
     assert!(store.tasks("foo").is_empty());
 
-    let error = remove_task::execute(&command, &store, &pool, &mut Accepted)
-        .await
-        .unwrap_err();
+    let error = remove_task::execute(
+        &command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut Accepted,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(error, RemoveTaskError::TaskNotFound { id } if id == command.id));
 }

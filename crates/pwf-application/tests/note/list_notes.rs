@@ -28,7 +28,7 @@ async fn list_orders_newest_first_and_defaults_to_ten(pool: sqlx::SqlitePool) {
             limit: None.into(),
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -68,7 +68,7 @@ async fn zero_is_unlimited_and_explicit_cap_reports_hidden_count(pool: sqlx::Sql
             limit: Some(0).into(),
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -78,7 +78,7 @@ async fn zero_is_unlimited_and_explicit_cap_reports_hidden_count(pool: sqlx::Sql
             limit: Some(2).into(),
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();

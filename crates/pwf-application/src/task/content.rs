@@ -1,83 +1,83 @@
-//! Applies prompt, lane, and report transforms to task file bodies.
+//! Applies body, section, and report transforms to task file bodies.
 
 use lazy_regex::{Regex, regex};
-use pwf_marker_sections::ParsedPrompt;
-use pwf_models::task::TaskPrompt;
-use pwf_wire::task::{TaskLane, TaskLaneEdits, TaskLanes};
+use pwf_marker_sections::ParsedMarkerSections;
+use pwf_models::task::TaskBody;
+use pwf_wire::task::{TaskMarkerSection, TaskMarkerSectionEdits};
 
-use super::lane_configuration::TaskPromptLanes;
+use super::marker_sections::TaskMarkerSections;
 
 const REPORT_SEPARATOR: &str = "\n\n### Report\n\n";
-const TASK_LANES: [TaskLane; 4] = [
-    TaskLane::Goal,
-    TaskLane::Context,
-    TaskLane::Constraint,
-    TaskLane::DoneWhen,
+const TASK_MARKER_SECTIONS: [TaskMarkerSection; 4] = [
+    TaskMarkerSection::Goal,
+    TaskMarkerSection::Context,
+    TaskMarkerSection::Constraint,
+    TaskMarkerSection::DoneWhen,
 ];
 
-fn placeholder_prompt_regex() -> &'static Regex {
+fn placeholder_body_regex() -> &'static Regex {
     regex!(r"(?i)(^\s*\[!\]\s*TODO\b|^\s*TODO\b|definir prompt|define prompt|tbd)")
 }
 
-enum PromptClassification {
+enum BodyClassification {
     Placeholder,
     AuthoredVerbatimLegacy,
     Authored,
 }
 
 #[must_use]
-pub(in crate::task) fn render(prompt: &str, lanes: &TaskPromptLanes) -> String {
-    match prompt_classification(prompt) {
-        PromptClassification::Placeholder | PromptClassification::AuthoredVerbatimLegacy => {
-            prompt.to_string()
+pub(in crate::task) fn render(body: &str, sections: &TaskMarkerSections) -> String {
+    match body_classification(body) {
+        BodyClassification::Placeholder | BodyClassification::AuthoredVerbatimLegacy => {
+            body.to_string()
         }
-        PromptClassification::Authored => lanes.render(&lanes.parse(prompt.as_ref())),
+        BodyClassification::Authored => sections.render(&sections.parse(body.as_ref())),
     }
 }
 
 #[must_use]
-pub(in crate::task) fn render_lanes(
-    task_lanes: &TaskLanes,
-    configuration: &TaskPromptLanes,
+pub(in crate::task) fn render_marker_sections(
+    task_sections: &pwf_wire::task::TaskMarkerSections,
+    configuration: &TaskMarkerSections,
 ) -> String {
-    configuration.render(&ParsedPrompt::new(
+    configuration.render(&ParsedMarkerSections::new(
         String::new(),
         [
-            task_lanes.goals().to_vec(),
-            task_lanes.context().to_vec(),
-            task_lanes.constraints().to_vec(),
-            task_lanes.done_when().to_vec(),
+            task_sections.goals().to_vec(),
+            task_sections.context().to_vec(),
+            task_sections.constraints().to_vec(),
+            task_sections.done_when().to_vec(),
         ],
     ))
 }
 
-/// Reports whether a prompt is empty or matches `TODO`, `[!] TODO`, `define prompt`, `definir
-/// prompt`, or `tbd` case-insensitively.
+/// Reports whether a body is empty or matches `TODO`, `[!] TODO`, the legacy `define prompt` or
+/// `definir prompt` phrases, or `tbd` case-insensitively.
 #[must_use]
-pub(in crate::task) fn is_placeholder_prompt(prompt: &TaskPrompt) -> bool {
+pub(in crate::task) fn is_placeholder_body(body: &TaskBody) -> bool {
     matches!(
-        prompt_classification(prompt.as_ref()),
-        PromptClassification::Placeholder
+        body_classification(body.as_ref()),
+        BodyClassification::Placeholder
     )
 }
 
-fn prompt_classification(prompt: &str) -> PromptClassification {
-    if prompt.trim().is_empty() || placeholder_prompt_regex().is_match(prompt) {
-        return PromptClassification::Placeholder;
+fn body_classification(body: &str) -> BodyClassification {
+    if body.trim().is_empty() || placeholder_body_regex().is_match(body) {
+        return BodyClassification::Placeholder;
     }
 
     // Rendering uses ASCII boundaries, but diagnostics use Unicode boundaries.
-    let prompt_lowercase = prompt.to_lowercase();
-    let prompt_trimmed = prompt_lowercase.trim_start();
-    let prompt_after_marker = prompt_trimmed.strip_prefix("[!]").map(str::trim_start);
-    if [Some(prompt_trimmed), prompt_after_marker]
+    let body_lowercase = body.to_lowercase();
+    let body_trimmed = body_lowercase.trim_start();
+    let body_after_marker = body_trimmed.strip_prefix("[!]").map(str::trim_start);
+    if [Some(body_trimmed), body_after_marker]
         .into_iter()
         .flatten()
         .any(starts_with_todo_word_boundary_ascii)
     {
-        PromptClassification::AuthoredVerbatimLegacy
+        BodyClassification::AuthoredVerbatimLegacy
     } else {
-        PromptClassification::Authored
+        BodyClassification::Authored
     }
 }
 
@@ -87,82 +87,88 @@ fn starts_with_todo_word_boundary_ascii(text: &str) -> bool {
     })
 }
 
-/// Splices lane bullets into existing sections and appends missing sections.
+/// Splices section bullets into existing sections and appends missing sections.
 #[must_use]
-pub(in crate::task) fn append_lanes(
+pub(in crate::task) fn append_marker_sections(
     body: &str,
-    prompt: &str,
-    configuration: &TaskPromptLanes,
+    shorthand: &str,
+    configuration: &TaskMarkerSections,
 ) -> String {
-    let prompt = prompt.trim();
-    debug_assert!(!prompt.is_empty(), "task append prompts are validated");
-    let (title, mut sections) = configuration.parse(prompt).into_parts();
+    let shorthand = shorthand.trim();
+    debug_assert!(!shorthand.is_empty(), "task append bodies are validated");
+    let (title, mut sections) = configuration.parse(shorthand).into_parts();
     if !title.is_empty() {
         sections[0].insert(0, title);
     }
     let mut out = body.to_string();
-    for (lane, bullets) in TASK_LANES.into_iter().zip(&sections) {
-        out = append_bullets_to_section(&out, configuration.header(lane), bullets);
+    for (section, bullets) in TASK_MARKER_SECTIONS.into_iter().zip(&sections) {
+        out = append_bullets_to_section(&out, configuration.header(section), bullets);
     }
     out
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
-pub(in crate::task) enum EditLanesError {
+pub(in crate::task) enum EditMarkerSectionsError {
     #[error("task body contains more than one `{header}` section")]
     DuplicateSection { header: String },
 }
 
-pub(in crate::task) fn edit_lanes(
+pub(in crate::task) fn edit_marker_sections(
     body: &str,
-    edits: &TaskLaneEdits,
-    configuration: &TaskPromptLanes,
-) -> Result<Option<String>, EditLanesError> {
-    reject_duplicate_lane_sections(body, configuration)?;
+    edits: &TaskMarkerSectionEdits,
+    configuration: &TaskMarkerSections,
+) -> Result<Option<String>, EditMarkerSectionsError> {
+    reject_duplicate_marker_sections(body, configuration)?;
     let mut edited = body.to_string();
 
-    for (lane, remove) in [
-        (TaskLane::Goal, edits.removals().contains(&TaskLane::Goal)),
+    for (section, remove) in [
         (
-            TaskLane::Context,
-            edits.removals().contains(&TaskLane::Context),
+            TaskMarkerSection::Goal,
+            edits.removals().contains(&TaskMarkerSection::Goal),
         ),
         (
-            TaskLane::Constraint,
-            edits.removals().contains(&TaskLane::Constraint),
+            TaskMarkerSection::Context,
+            edits.removals().contains(&TaskMarkerSection::Context),
         ),
         (
-            TaskLane::DoneWhen,
-            edits.removals().contains(&TaskLane::DoneWhen),
+            TaskMarkerSection::Constraint,
+            edits.removals().contains(&TaskMarkerSection::Constraint),
+        ),
+        (
+            TaskMarkerSection::DoneWhen,
+            edits.removals().contains(&TaskMarkerSection::DoneWhen),
         ),
     ] {
         if remove {
-            edited = clear_lane_section(&edited, lane, configuration);
+            edited = clear_marker_section(&edited, section, configuration);
         }
     }
 
-    for (lane, values) in [
-        (TaskLane::Goal, edits.additions().goals()),
-        (TaskLane::Context, edits.additions().context()),
-        (TaskLane::Constraint, edits.additions().constraints()),
-        (TaskLane::DoneWhen, edits.additions().done_when()),
+    for (section, values) in [
+        (TaskMarkerSection::Goal, edits.additions().goals()),
+        (TaskMarkerSection::Context, edits.additions().context()),
+        (
+            TaskMarkerSection::Constraint,
+            edits.additions().constraints(),
+        ),
+        (TaskMarkerSection::DoneWhen, edits.additions().done_when()),
     ] {
         if !values.is_empty() {
-            edited = add_lane_values(&edited, lane, values, configuration);
+            edited = add_marker_section_values(&edited, section, values, configuration);
         }
     }
 
     Ok((edited != body).then_some(edited))
 }
 
-fn reject_duplicate_lane_sections(
+fn reject_duplicate_marker_sections(
     body: &str,
-    configuration: &TaskPromptLanes,
-) -> Result<(), EditLanesError> {
-    for lane in TASK_LANES {
-        let header = configuration.header(lane);
+    configuration: &TaskMarkerSections,
+) -> Result<(), EditMarkerSectionsError> {
+    for section in TASK_MARKER_SECTIONS {
+        let header = configuration.header(section);
         if header_bounds(body, header).len() > 1 {
-            return Err(EditLanesError::DuplicateSection {
+            return Err(EditMarkerSectionsError::DuplicateSection {
                 header: markdown_header(header),
             });
         }
@@ -170,48 +176,52 @@ fn reject_duplicate_lane_sections(
     Ok(())
 }
 
-fn clear_lane_section(body: &str, lane: TaskLane, configuration: &TaskPromptLanes) -> String {
-    let header = configuration.header(lane);
+fn clear_marker_section(
+    body: &str,
+    section: TaskMarkerSection,
+    configuration: &TaskMarkerSections,
+) -> String {
+    let header = configuration.header(section);
     let Some((header_start, header_end)) = header_bounds(body, header).into_iter().next() else {
-        return if lane == TaskLane::Goal {
-            insert_lane_section(body, lane, &[], configuration)
+        return if section == TaskMarkerSection::Goal {
+            insert_marker_section(body, section, &[], configuration)
         } else {
             body.to_string()
         };
     };
     let section_end = section_end(body, header_end);
-    let replacement = (lane == TaskLane::Goal).then(|| markdown_header(header));
+    let replacement = (section == TaskMarkerSection::Goal).then(|| markdown_header(header));
     replace_region(body, header_start, section_end, replacement.as_deref())
 }
 
-fn add_lane_values(
+fn add_marker_section_values(
     body: &str,
-    lane: TaskLane,
+    section: TaskMarkerSection,
     values: &[String],
-    configuration: &TaskPromptLanes,
+    configuration: &TaskMarkerSections,
 ) -> String {
-    let header = configuration.header(lane);
+    let header = configuration.header(section);
     if header_bounds(body, header).is_empty() {
-        insert_lane_section(body, lane, values, configuration)
+        insert_marker_section(body, section, values, configuration)
     } else {
         append_bullets_to_section(body, header, values)
     }
 }
 
-fn insert_lane_section(
+fn insert_marker_section(
     body: &str,
-    lane: TaskLane,
+    section: TaskMarkerSection,
     values: &[String],
-    configuration: &TaskPromptLanes,
+    configuration: &TaskMarkerSections,
 ) -> String {
-    let insertion_offset = TASK_LANES
+    let insertion_offset = TASK_MARKER_SECTIONS
         .into_iter()
-        .filter(|candidate| lane_index(*candidate) > lane_index(lane))
+        .filter(|candidate| marker_section_index(*candidate) > marker_section_index(section))
         .flat_map(|candidate| header_bounds(body, configuration.header(candidate)))
         .map(|(start, _)| start)
         .min()
         .unwrap_or(body.len());
-    let mut inserted = markdown_header(configuration.header(lane));
+    let mut inserted = markdown_header(configuration.header(section));
     for (index, value) in values.iter().enumerate() {
         inserted.push_str(if index == 0 { "\n\n- " } else { "\n- " });
         inserted.push_str(value);
@@ -239,7 +249,7 @@ fn header_bounds(content: &str, header: &str) -> Vec<(usize, usize)> {
     let mut bounds = Vec::new();
     let mut offset = 0;
     for segment in content.split('\n') {
-        if is_lane_header_line(segment, header) {
+        if is_marker_section_header_line(segment, header) {
             bounds.push((offset, offset + segment.len()));
         }
         offset += segment.len() + 1;
@@ -295,7 +305,7 @@ fn append_bullets(out: &mut String, bullets: &[String], first_separator: &'stati
 fn header_line_end(content: &str, header: &str) -> Option<usize> {
     let mut offset = 0;
     for segment in content.split('\n') {
-        if is_lane_header_line(segment, header) {
+        if is_marker_section_header_line(segment, header) {
             return Some(offset + segment.len());
         }
         offset += segment.len() + 1;
@@ -303,7 +313,7 @@ fn header_line_end(content: &str, header: &str) -> Option<usize> {
     None
 }
 
-fn is_lane_header_line(line: &str, header: &str) -> bool {
+fn is_marker_section_header_line(line: &str, header: &str) -> bool {
     line.strip_prefix("## ")
         .and_then(|line| line.strip_prefix(header))
         .is_some_and(|rest| rest.trim().is_empty())
@@ -316,12 +326,12 @@ fn markdown_header(header: &str) -> String {
     markdown
 }
 
-const fn lane_index(lane: TaskLane) -> usize {
-    match lane {
-        TaskLane::Goal => 0,
-        TaskLane::Context => 1,
-        TaskLane::Constraint => 2,
-        TaskLane::DoneWhen => 3,
+const fn marker_section_index(section: TaskMarkerSection) -> usize {
+    match section {
+        TaskMarkerSection::Goal => 0,
+        TaskMarkerSection::Context => 1,
+        TaskMarkerSection::Constraint => 2,
+        TaskMarkerSection::DoneWhen => 3,
     }
 }
 
@@ -357,9 +367,9 @@ pub(in crate::task) fn append_report(body: &str, report: &str) -> String {
 pub(in crate::task) fn remove_report(body: &str) -> (String, Option<String>) {
     body.rsplit_once(REPORT_SEPARATOR).map_or_else(
         || (body.to_string(), None),
-        |(prompt, report)| {
+        |(body, report)| {
             (
-                prompt.trim_end().to_string(),
+                body.trim_end().to_string(),
                 Some(report.trim_end().to_string()),
             )
         },
@@ -373,27 +383,27 @@ mod tests {
     const S: &str = "\n\n";
 
     fn render(raw: &str) -> String {
-        super::render(raw, &TaskPromptLanes::default_fixture())
+        super::render(raw, &TaskMarkerSections::default_fixture())
     }
 
-    fn is_placeholder_prompt(raw: &str) -> bool {
-        super::is_placeholder_prompt(&TaskPrompt::new(raw))
+    fn is_placeholder_body(raw: &str) -> bool {
+        super::is_placeholder_body(&TaskBody::new(raw))
     }
 
-    fn append_lanes(body: &str, raw: &str) -> String {
-        super::append_lanes(body, raw, &TaskPromptLanes::default_fixture())
-    }
-
-    #[test]
-    fn placeholder_prompt_detection() {
-        assert!(is_placeholder_prompt(""));
-        assert!(is_placeholder_prompt("TODO define this"));
-        assert!(is_placeholder_prompt("definir prompt"));
-        assert!(!is_placeholder_prompt("add startup toggle"));
+    fn append_marker_sections(body: &str, raw: &str) -> String {
+        super::append_marker_sections(body, raw, &TaskMarkerSections::default_fixture())
     }
 
     #[test]
-    fn content_renders_marker_first_prompt_without_body_leakage() {
+    fn placeholder_body_detection() {
+        assert!(is_placeholder_body(""));
+        assert!(is_placeholder_body("TODO define this"));
+        assert!(is_placeholder_body("definir prompt"));
+        assert!(!is_placeholder_body("add startup toggle"));
+    }
+
+    #[test]
+    fn content_renders_marker_first_body_without_body_leakage() {
         assert_eq!(
             render("/c context"),
             format!("## Goals\n{S}## Context{S}- context")
@@ -401,13 +411,13 @@ mod tests {
     }
 
     #[test]
-    fn content_wraps_a_normal_prompt() {
+    fn content_wraps_a_normal_body() {
         assert_eq!(render("add startup toggle"), "## Goals\n");
         assert_eq!(render("a / b"), format!("## Goals{S}- b"));
     }
 
     #[test]
-    fn content_renders_one_bullet_per_slash_lane() {
+    fn content_renders_one_bullet_per_slash_section() {
         assert_eq!(
             render("create engine feature to add update task / make it idempotent"),
             format!("## Goals{S}- make it idempotent")
@@ -422,9 +432,9 @@ mod tests {
     #[test]
     fn content_keeps_placeholder_raw_so_it_stays_detectable() {
         assert_eq!(render("TODO"), "TODO");
-        assert!(is_placeholder_prompt(&render("TODO")));
-        assert!(is_placeholder_prompt(&render("tbd")));
-        assert!(is_placeholder_prompt(&render("define prompt")));
+        assert!(is_placeholder_body(&render("TODO")));
+        assert!(is_placeholder_body(&render("tbd")));
+        assert!(is_placeholder_body(&render("define prompt")));
         assert_eq!(render("tbd"), "tbd");
         assert_eq!(render("define prompt"), "define prompt");
     }
@@ -445,7 +455,7 @@ mod tests {
             "definir prompt",
             "the plan is tbd",
         ] {
-            assert!(is_placeholder_prompt(raw), "should be placeholder: {raw:?}");
+            assert!(is_placeholder_body(raw), "should be placeholder: {raw:?}");
         }
         for raw in [
             "add startup toggle",
@@ -454,7 +464,7 @@ mod tests {
             "/c context",
         ] {
             assert!(
-                !is_placeholder_prompt(raw),
+                !is_placeholder_body(raw),
                 "should not be placeholder: {raw:?}"
             );
         }
@@ -462,33 +472,33 @@ mod tests {
 
     #[test]
     fn unicode_todo_suffix_remains_raw_without_becoming_placeholder() {
-        for prompt in ["TODOé", "[!] TODOé"] {
-            assert!(!is_placeholder_prompt(prompt));
-            assert_eq!(render(prompt), prompt);
+        for body in ["TODOé", "[!] TODOé"] {
+            assert!(!is_placeholder_body(body));
+            assert_eq!(render(body), body);
         }
-        assert!(is_placeholder_prompt("TODO-implement"));
+        assert!(is_placeholder_body("TODO-implement"));
     }
 
     #[test]
-    fn append_lanes_grows_an_existing_section_in_place() {
+    fn append_marker_sections_grows_an_existing_section_in_place() {
         assert_eq!(
-            append_lanes("## Goals\n- do the thing\n", "also this"),
+            append_marker_sections("## Goals\n- do the thing\n", "also this"),
             "## Goals\n- do the thing\n- also this\n"
         );
     }
 
     #[test]
-    fn append_lanes_creates_a_missing_section_at_the_end() {
+    fn append_marker_sections_creates_a_missing_section_at_the_end() {
         assert_eq!(
-            append_lanes("## Goals\n- do the thing\n", "another goal /c new context"),
+            append_marker_sections("## Goals\n- do the thing\n", "another goal /c new context"),
             "## Goals\n- do the thing\n- another goal\n\n## Context\n\n- new context\n"
         );
     }
 
     #[test]
-    fn append_lanes_marker_first_leaves_goals_untouched() {
+    fn append_marker_sections_marker_first_leaves_goals_untouched() {
         assert_eq!(
-            append_lanes("## Goals\n- do the thing\n", "/c context"),
+            append_marker_sections("## Goals\n- do the thing\n", "/c context"),
             "## Goals\n- do the thing\n\n## Context\n\n- context\n"
         );
     }

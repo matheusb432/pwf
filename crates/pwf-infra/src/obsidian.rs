@@ -27,3 +27,6 @@ fn project_snapshot_path(project_directory: &Path) -> Option<PathBuf> {
 fn project_snapshot_backup_path(project_directory: &Path) -> Option<PathBuf> {
     project_snapshot_path(project_directory).map(|path| path.with_extension("backup.md"))
 }
+
+#[cfg(test)]
+pub(crate) use identity::task_directory_scan_count;

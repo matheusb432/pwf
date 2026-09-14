@@ -1,9 +1,9 @@
 use pwf_application::task::{
-    TaskPromptLanesError, TaskPromptTitleError,
+    TaskBodyTitleError, TaskMarkerSectionsError,
     add_task::{self, AddTaskError},
 };
 use pwf_models::task::{TaskStatus, TaskTitle};
-use pwf_wire::task::{AddTask, AddTaskPrompt, TaskLanes, TaskMutationSummary};
+use pwf_wire::task::{AddTask, AddTaskBody, TaskMarkerSections, TaskMutationSummary};
 
 use crate::support::{
     FixedClock, InMemoryStore, InMemoryStoreFailure, blocked_by, insert_project, stored_blocked_by,
@@ -23,9 +23,9 @@ fn command() -> AddTask {
     let source_id = "FOO-0001".parse::<pwf_models::task::TaskId>().unwrap();
     AddTask::new(
         source_id.project_id(),
-        AddTaskPrompt::from_structured(
+        AddTaskBody::from_structured(
             task_title("ship it"),
-            TaskLanes::try_new(
+            TaskMarkerSections::try_new(
                 vec!["do the thing".to_string()],
                 Vec::new(),
                 Vec::new(),
@@ -40,9 +40,15 @@ fn command() -> AddTask {
 async fn add_inserts_task_file_and_returns_its_summary(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
 
-    let added = add_task::execute(command(), &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    let added = add_task::execute(
+        command(),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(
@@ -65,12 +71,18 @@ async fn add_inserts_task_file_and_returns_its_summary(pool: sqlx::SqlitePool) {
 async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     let mut command = command();
-    command.prompt =
-        AddTaskPrompt::from_structured(task_title("fix # metadata"), TaskLanes::default());
+    command.body =
+        AddTaskBody::from_structured(task_title("fix # metadata"), TaskMarkerSections::default());
 
-    let added = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    let added = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(store.tasks("foo")[0].title, "fix # metadata");
@@ -81,11 +93,17 @@ async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
 async fn shorthand_add_accepts_only_a_title_and_normalizes_it_once(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     let mut command = command();
-    command.prompt = AddTaskPrompt::from_shorthand("  Web: Fix # metadata; keep case  ");
+    command.body = AddTaskBody::from_shorthand("  Web: Fix # metadata; keep case  ");
 
-    let added = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    let added = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(
@@ -99,25 +117,31 @@ async fn shorthand_add_accepts_only_a_title_and_normalizes_it_once(pool: sqlx::S
 async fn shorthand_add_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     sqlx::query(
-        "UPDATE task_prompt_lanes SET marker = '/o', header = 'Objectives' WHERE lane = 'goals'",
+        "UPDATE task_marker_sections SET marker = '/o', header = 'Objectives' WHERE section = 'goals'",
     )
     .execute(&pool)
     .await
     .unwrap();
     sqlx::query(
-        "UPDATE task_prompt_lanes SET marker = '/b', header = 'Background' WHERE lane = 'context'",
+        "UPDATE task_marker_sections SET marker = '/b', header = 'Background' WHERE section = 'context'",
     )
     .execute(&pool)
     .await
     .unwrap();
     let mut command = command();
-    command.prompt = AddTaskPrompt::from_shorthand(
+    command.body = AddTaskBody::from_shorthand(
         "custom title /o custom goal /b custom context /g fallback context",
     );
 
-    add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     let task = &store.tasks("foo")[0];
     assert_eq!(task.title, "custom title");
@@ -131,9 +155,9 @@ async fn shorthand_add_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) 
 async fn structured_add_renders_lane_values_without_shorthand_parsing(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     let mut command = command();
-    command.prompt = AddTaskPrompt::from_structured(
-        task_title("machine prompt"),
-        TaskLanes::try_new(
+    command.body = AddTaskBody::from_structured(
+        task_title("machine body"),
+        TaskMarkerSections::try_new(
             vec!["keep /d literal".to_string()],
             vec!["known context".to_string()],
             Vec::new(),
@@ -142,9 +166,15 @@ async fn structured_add_renders_lane_values_without_shorthand_parsing(pool: sqlx
         .unwrap(),
     );
 
-    let added = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    let added = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(
@@ -159,9 +189,15 @@ async fn add_reports_a_blocked_by_id_from_an_unknown_project(pool: sqlx::SqliteP
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["MISS-0001"]));
 
-    let error = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(
         error,
@@ -188,9 +224,15 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["PAU-0001"]));
 
-    let added = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    let added = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
 }
@@ -208,9 +250,15 @@ async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sq
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["FOO-0001"]));
 
-    let error = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -241,9 +289,15 @@ async fn add_uses_project_id_even_when_another_project_has_that_title(pool: sqlx
         .with_project_id("original", "FOO")
         .with_project_id("foo", "ALT");
 
-    let added = add_task::execute(command(), &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    let added = add_task::execute(
+        command(),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(store.tasks("original").len(), 1);
@@ -273,9 +327,15 @@ async fn snapshots_only_reached_projects_once_including_paused_projects(pool: sq
         .with_failure(InMemoryStoreFailure::ListTasks);
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["FOO-0001", "FOO-0002"]));
-    let error = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(error, AddTaskError::BlockedByCycle { .. }));
     let mut reads = store.dependency_reads();
     reads.sort();
@@ -291,9 +351,15 @@ async fn missing_projects_and_task_files_do_not_supply_dependencies(pool: sqlx::
     let store = registered_store(&pool).await;
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["FOO-0002", "AUX-0001"]));
-    let error = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(
         error.to_string(),
         "Unknown --blocked-by id(s): FOO-0002, AUX-0001."
@@ -309,9 +375,15 @@ async fn dependency_read_failures_keep_the_task_id_and_source(pool: sqlx::Sqlite
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["AUX-0001"]));
     insert_project(&pool, "AUX", "aux", "/work/aux", "/tasks/aux", false).await;
-    let error = add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(&error, AddTaskError::ReadBlockedBy { id, .. } if id.as_ref() == "AUX-0001"));
     assert_eq!(
         error.source().unwrap().to_string(),
@@ -323,10 +395,16 @@ async fn dependency_read_failures_keep_the_task_id_and_source(pool: sqlx::Sqlite
 async fn seeded_configuration_preserves_the_current_markers_and_headers(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     let mut command = command();
-    command.prompt = AddTaskPrompt::from_shorthand("title / goal /c context /n constraint /d done");
-    add_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    command.body = AddTaskBody::from_shorthand("title / goal /c context /n constraint /d done");
+    add_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
     let task = &store.tasks("foo")[0];
     assert_eq!(task.title, "title");
     assert_eq!(
@@ -338,16 +416,22 @@ async fn seeded_configuration_preserves_the_current_markers_and_headers(pool: sq
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn missing_lane_rejects_creation(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
-    sqlx::query("DELETE FROM task_prompt_lanes WHERE lane = 'constraints'")
+    sqlx::query("DELETE FROM task_marker_sections WHERE section = 'constraints'")
         .execute(&pool)
         .await
         .unwrap();
-    let error = add_task::execute(command(), &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = add_task::execute(
+        command(),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(
         error,
-        AddTaskError::PromptLanes(TaskPromptLanesError::InvalidLaneSet { .. })
+        AddTaskError::MarkerSections(TaskMarkerSectionsError::InvalidSectionSet { .. })
     ));
     assert!(store.tasks("foo").is_empty());
 }
@@ -355,15 +439,21 @@ async fn missing_lane_rejects_creation(pool: sqlx::SqlitePool) {
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn shorthand_still_requires_a_title(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
-    for prompt in ["  ", "/g only a goal"] {
+    for body in ["  ", "/g only a goal"] {
         let mut command = command();
-        command.prompt = AddTaskPrompt::from_shorthand(prompt);
-        let error = add_task::execute(command, &store, &pool, &FixedClock)
-            .await
-            .unwrap_err();
+        command.body = AddTaskBody::from_shorthand(body);
+        let error = add_task::execute(
+            command,
+            &store,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+            &FixedClock,
+            &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(
             error,
-            AddTaskError::InvalidTitle(TaskPromptTitleError::Missing)
+            AddTaskError::InvalidTitle(TaskBodyTitleError::Missing)
         ));
         assert!(store.tasks("foo").is_empty());
     }
@@ -372,12 +462,24 @@ async fn shorthand_still_requires_a_title(pool: sqlx::SqlitePool) {
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn repeated_creation_allocates_distinct_task_files(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
-    let first = add_task::execute(command(), &store, &pool, &FixedClock)
-        .await
-        .unwrap();
-    let second = add_task::execute(command(), &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    let first = add_task::execute(
+        command(),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
+    let second = add_task::execute(
+        command(),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(first.outcome.as_ref(), "FOO-0001");
     assert_eq!(second.outcome.as_ref(), "FOO-0002");

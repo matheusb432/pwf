@@ -111,13 +111,15 @@ mod tests {
         first.unwrap();
         second.unwrap();
         let pool = pwf_infra::database::build_pool(&path).await.unwrap();
-        sqlx::query("UPDATE task_prompt_lanes SET header = 'Objectives' WHERE lane = 'goals'")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE task_marker_sections SET header = 'Objectives' WHERE section = 'goals'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         super::run(&path).await.unwrap();
         let header: String =
-            sqlx::query_scalar("SELECT header FROM task_prompt_lanes WHERE lane = 'goals'")
+            sqlx::query_scalar("SELECT header FROM task_marker_sections WHERE section = 'goals'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();

@@ -1,6 +1,6 @@
 use pwf_models::{
     AppDate,
-    task::{PriorityTier, TaskPrompt, TaskTimestamp},
+    task::{PriorityTier, TaskBody, TaskTimestamp},
 };
 
 #[test]
@@ -74,10 +74,10 @@ fn task_timestamp_constructors_truncate_instants_and_retain_offsets() {
 }
 
 #[test]
-fn task_prompt_preserves_authored_text() {
-    let prompt = TaskPrompt::new("  ship it /c preserve spacing  ");
+fn task_body_preserves_authored_text() {
+    let body = TaskBody::new("  ship it /c preserve spacing  ");
 
-    assert_eq!(prompt.as_ref(), "  ship it /c preserve spacing  ");
+    assert_eq!(body.as_ref(), "  ship it /c preserve spacing  ");
 }
 
 #[test]

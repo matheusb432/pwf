@@ -227,9 +227,18 @@ fn application_project_errors_are_emitted_without_command_prefixes() {
 
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
-        assert_eq!(
-            String::from_utf8(output.stderr).unwrap(),
-            "Error: project not found: XYZ\n"
+        let diagnostic = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            diagnostic.starts_with("error: project not found: XYZ\n"),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains(&format!("Usage: pwf project {operation}")),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("For more information, try '--help'."),
+            "{diagnostic}"
         );
     }
 }

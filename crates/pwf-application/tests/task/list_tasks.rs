@@ -135,7 +135,7 @@ async fn selected_long_list_resolves_blockers_from_paused_projects(pool: sqlx::S
     let result = list_tasks::execute(
         &query,
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &store,
         &list_tasks::ListTasksSnapshots::default(),
         &FixedSettings::default(),
@@ -193,7 +193,7 @@ async fn run_with_snapshots(
     list_tasks::execute(
         query,
         store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         store,
         snapshots,
         &FixedSettings::default(),
@@ -1051,7 +1051,7 @@ async fn detailed_page_reads_only_its_referenced_projects(pool: sqlx::SqlitePool
     let first = list_tasks::execute(
         &query,
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &store,
         &snapshots,
         &FixedSettings::default(),
@@ -1063,7 +1063,7 @@ async fn detailed_page_reads_only_its_referenced_projects(pool: sqlx::SqlitePool
     let second = list_tasks::execute(
         &query,
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &store,
         &snapshots,
         &FixedSettings::default(),

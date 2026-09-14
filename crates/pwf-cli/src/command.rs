@@ -55,6 +55,7 @@ impl fmt::Display for CommandName {
 #[derive(Debug)]
 pub struct Cli {
     pub command: RootCommand,
+    pub(crate) context: clap::Command,
 }
 
 #[derive(Debug)]
@@ -125,22 +126,16 @@ fn parse_normalized_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
         let mut selected_command = selected_command(&command, &matches).clone();
         error.format(&mut selected_command)
     })?;
-    match parsed.command {
-        ParsedRootCommand::Doctor(arguments) => Ok(Cli {
-            command: RootCommand::Doctor(arguments),
-        }),
-        ParsedRootCommand::Server(arguments) => Ok(Cli {
-            command: RootCommand::Server(arguments),
-        }),
-        ParsedRootCommand::Project(arguments) => Ok(Cli {
-            command: RootCommand::Project(arguments),
-        }),
-        ParsedRootCommand::Task(command) => Ok(Cli {
-            command: RootCommand::Task(command),
-        }),
-        ParsedRootCommand::Note(arguments) => parse_note_arguments(arguments),
-        ParsedRootCommand::Shorthand(arguments) => parse_task_or_route(arguments),
-    }
+    let context = selected_command(&command, &matches).clone();
+    let command = match parsed.command {
+        ParsedRootCommand::Doctor(arguments) => RootCommand::Doctor(arguments),
+        ParsedRootCommand::Server(arguments) => RootCommand::Server(arguments),
+        ParsedRootCommand::Project(arguments) => RootCommand::Project(arguments),
+        ParsedRootCommand::Task(command) => RootCommand::Task(command),
+        ParsedRootCommand::Note(arguments) => return parse_note_arguments(arguments, context),
+        ParsedRootCommand::Shorthand(arguments) => return parse_task_or_route(arguments),
+    };
+    Ok(Cli { command, context })
 }
 
 fn selected_command<'a>(
@@ -156,10 +151,14 @@ fn selected_command<'a>(
     selected_command(subcommand, subcommand_matches)
 }
 
-fn parse_note_arguments(arguments: ParsedNoteArguments) -> Result<Cli, clap::Error> {
+fn parse_note_arguments(
+    arguments: ParsedNoteArguments,
+    context: clap::Command,
+) -> Result<Cli, clap::Error> {
     match arguments.command {
         ParsedNoteCommand::Explicit(command) => Ok(Cli {
             command: RootCommand::Note(note::Arguments { command }),
+            context,
         }),
         ParsedNoteCommand::ImplicitList(arguments) => parse_note_list(arguments),
     }
@@ -196,10 +195,24 @@ fn parse_task_or_route(arguments: Vec<String>) -> Result<Cli, clap::Error> {
         .collect();
     match parse_normalized_argv(task_argv) {
         Err(error) if error.kind() == ErrorKind::InvalidSubcommand => {
-            let route_argv = std::iter::once("route".to_string())
-                .chain(arguments)
-                .collect();
-            parse_normalized_argv(route_argv)
+            if let Some((project, options)) = arguments.split_first()
+                && project.parse::<pwf_models::project::ProjectId>().is_ok()
+            {
+                let argv = ["task", "list", "--project", project]
+                    .into_iter()
+                    .chain(options.iter().map(String::as_str))
+                    .map(str::to_string)
+                    .collect();
+                return parse_normalized_argv(argv);
+            }
+            let mut root = ParsedCli::command()
+                .allow_external_subcommands(false)
+                .external_subcommand_value_parser(None);
+            match root.try_get_matches_from_mut(std::iter::once("pwf".to_string()).chain(arguments))
+            {
+                Err(error) => Err(error),
+                Ok(_) => Err(root.error(ErrorKind::InvalidSubcommand, "unrecognized subcommand")),
+            }
         }
         result => result,
     }

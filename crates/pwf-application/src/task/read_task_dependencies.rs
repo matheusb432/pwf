@@ -7,7 +7,10 @@ use pwf_models::{
 use pwf_wire::project::{GetProject, ProjectStatusFilter};
 
 use crate::{
-    ports::task_vault::{TaskDependencyRecord, TaskVault},
+    ports::{
+        project_store::ProjectStore,
+        task_vault::{TaskDependencyRecord, TaskVault},
+    },
     project::get_project::{self, GetProjectError},
 };
 
@@ -32,7 +35,7 @@ pub enum ReadTaskDependenciesError {
 pub async fn execute(
     query: ReadTaskDependencies<'_>,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<HashMap<TaskId, TaskDependencyRecord>, ReadTaskDependenciesError> {
     let mut projects = HashMap::<ProjectId, HashMap<TaskId, TaskDependencyRecord>>::new();
     let mut records = HashMap::new();
@@ -50,7 +53,7 @@ pub async fn execute(
                     id: project_id.clone(),
                     status: ProjectStatusFilter::IncludingPaused,
                 },
-                pool,
+                project_store,
             )
             .await
             {

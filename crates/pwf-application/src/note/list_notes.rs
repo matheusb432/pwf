@@ -1,9 +1,8 @@
 //! Lists one managed project's notes.
-
 use pwf_wire::note::{ListNotes, ListedNotes, NoteListLimit};
 
 use crate::{
-    ports::project_note::ProjectNotes,
+    ports::{project_note::ProjectNotes, project_store::ProjectStore},
     project::{get_active_project, get_project::GetProjectError},
 };
 
@@ -22,9 +21,9 @@ pub enum ListNotesError {
 pub async fn execute(
     query: ListNotes,
     store: &impl ProjectNotes,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<ListedNotes, ListNotesError> {
-    let project = get_active_project::execute(query.project_id, pool).await?;
+    let project = get_active_project::execute(query.project_id, project_store).await?;
     let mut notes = store
         .list_notes(&project)
         .map_err(|error| ListNotesError::Store(anyhow::Error::new(error)))?;

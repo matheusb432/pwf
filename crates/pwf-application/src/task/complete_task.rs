@@ -6,7 +6,7 @@ use super::{
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
 };
-use crate::ports::{clock::Clock, task_vault::TaskVault};
+use crate::ports::{clock::Clock, project_store::ProjectStore, task_vault::TaskVault};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompleteTaskError {
@@ -22,10 +22,10 @@ pub enum CompleteTaskError {
 pub async fn execute(
     command: &CompleteTask,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     clock: &impl Clock,
 ) -> Result<TaskMutationResult<()>, CompleteTaskError> {
-    let project = resolve_task_project::execute(command.id.clone(), pool).await?;
+    let project = resolve_task_project::execute(command.id.clone(), project_store).await?;
     let summary = task_closure::close(
         &TaskClosure {
             action: ClosedTaskAction::Done,

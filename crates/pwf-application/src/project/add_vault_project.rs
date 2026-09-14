@@ -7,7 +7,7 @@ use pwf_models::project::{
 use pwf_wire::project::{AddVaultProject, ProjectFields};
 
 use super::add_project::{self, AddProjectError};
-use crate::ports::project_directory::ProjectDirectoryClient;
+use crate::ports::{project_directory::ProjectDirectoryClient, project_store::ProjectStore};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddVaultProjectError {
@@ -32,7 +32,7 @@ pub enum AddVaultProjectError {
 #[cqrsy::command]
 pub async fn execute(
     command: AddVaultProject,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     home: &HomeDirectory,
     directory: &impl ProjectDirectoryClient,
 ) -> Result<ProjectId, AddVaultProjectError> {
@@ -96,7 +96,7 @@ pub async fn execute(
             }
         })?),
     };
-    add_project::execute(fields, pool, home)
+    add_project::execute(fields, project_store, home)
         .await
         .map(|project| project.id)
         .map_err(Into::into)

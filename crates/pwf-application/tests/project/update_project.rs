@@ -35,7 +35,7 @@ async fn read_project(project_id: &str, pool: &sqlx::SqlitePool) -> Project {
             id: project_id.parse().unwrap(),
             status: ProjectStatusFilter::IncludingPaused,
         },
-        pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap()
@@ -46,12 +46,18 @@ async fn source_update_is_atomic_idempotent_and_reuses_shared_sources(pool: sqlx
     insert_project(&pool, "FOO", "foo", "/work/old", "/tasks/foo", true).await;
     insert_project(&pool, "BAR", "bar", "/work/shared", "/tasks/bar", false).await;
 
-    update_project::execute(update("FOO", "/work/shared"), &pool)
-        .await
-        .unwrap();
-    update_project::execute(update("FOO", "/work/shared"), &pool)
-        .await
-        .unwrap();
+    update_project::execute(
+        update("FOO", "/work/shared"),
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
+    update_project::execute(
+        update("FOO", "/work/shared"),
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     let stored: (String, String, String, String, bool) = sqlx::query_as(
         r"
@@ -90,9 +96,12 @@ async fn source_update_is_atomic_idempotent_and_reuses_shared_sources(pool: sqlx
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn missing_project_rolls_back_the_candidate_source(pool: sqlx::SqlitePool) {
-    let error = update_project::execute(update("MISS", "/work/candidate"), &pool)
-        .await
-        .unwrap_err();
+    let error = update_project::execute(
+        update("MISS", "/work/candidate"),
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap_err();
 
     assert_matches!(
         error,
@@ -117,7 +126,7 @@ async fn snapshot_updates_preserve_omitted_fields_when_repeated(pool: sqlx::Sqli
                 snapshot_enabled: SetField::Set(enabled),
                 ..unchanged_update("FOO")
             },
-            &pool,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         )
         .await
         .unwrap();
@@ -137,7 +146,7 @@ async fn source_clear_preserves_omitted_fields_when_repeated(pool: sqlx::SqliteP
             snapshot_enabled: SetField::Set(true),
             ..unchanged_update("FOO")
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -149,7 +158,7 @@ async fn source_clear_preserves_omitted_fields_when_repeated(pool: sqlx::SqliteP
                 source: PatchField::Clear,
                 ..unchanged_update("FOO")
             },
-            &pool,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         )
         .await
         .unwrap();
@@ -171,7 +180,7 @@ async fn missing_project_rejects_updates_without_setting_source(pool: sqlx::Sqli
                 snapshot_enabled: SetField::Set(true),
                 ..unchanged_update("MISS")
             },
-            &pool,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         )
         .await
         .unwrap_err();
@@ -192,21 +201,22 @@ async fn concurrent_disjoint_patches_preserve_each_field(pool: sqlx::SqlitePool)
     let vault = "/vault/foo"
         .parse::<pwf_models::project::ObsidianVault>()
         .unwrap();
+    let projects = pwf_infra::project_store::SqliteProjectStore::new(pool.clone());
     let (source, obsidian_vault, snapshot_enabled) = tokio::join!(
-        update_project::execute(update("FOO", "/work/new"), &pool),
+        update_project::execute(update("FOO", "/work/new"), &projects),
         update_project::execute(
             UpdateProject {
                 obsidian_vault: PatchField::Set(vault.clone()),
                 ..unchanged_update("FOO")
             },
-            &pool,
+            &projects,
         ),
         update_project::execute(
             UpdateProject {
                 snapshot_enabled: SetField::Set(true),
                 ..unchanged_update("FOO")
             },
-            &pool,
+            &projects,
         ),
     );
     source.unwrap();

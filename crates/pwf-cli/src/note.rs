@@ -19,7 +19,7 @@ use pwf_models::{
     note::{
         NoteContent, NoteDomain, NoteSelector, NoteSource, NoteTag, NoteTitle, NoteVerification,
     },
-    project::ProjectSelector,
+    project::ProjectId,
     settings::NoteStatusColors,
 };
 
@@ -51,9 +51,9 @@ pub(crate) enum Command {
 
 #[derive(Args, Debug)]
 pub(crate) struct ListArguments {
-    /// Managed project name or id
-    #[arg(value_name = "PROJECT")]
-    project: ProjectSelector,
+    /// Managed project ID (two to four ASCII letters)
+    #[arg(value_name = "PROJECT", value_parser = crate::project::parse_project_id)]
+    project: ProjectId,
     /// Cap to N listed notes (default 10)
     #[arg(short = 'n', long, value_name = "N")]
     number: Option<usize>,
@@ -61,9 +61,9 @@ pub(crate) struct ListArguments {
 
 #[derive(Args, Debug)]
 pub(crate) struct AddArguments {
-    /// Managed project name or id
-    #[arg(value_name = "PROJECT")]
-    project: ProjectSelector,
+    /// Managed project ID (two to four ASCII letters)
+    #[arg(value_name = "PROJECT", value_parser = crate::project::parse_project_id)]
+    project: ProjectId,
     /// Title and Markdown content separated by ` / `
     #[arg(value_name = "NOTE", required_unless_present = "structured_note")]
     note: Option<PositionalNote>,
@@ -99,9 +99,9 @@ struct StructuredNote {
 
 #[derive(Args, Debug)]
 pub(crate) struct RemoveArguments {
-    /// Managed project name or id
-    #[arg(value_name = "PROJECT")]
-    project: ProjectSelector,
+    /// Managed project ID (two to four ASCII letters)
+    #[arg(value_name = "PROJECT", value_parser = crate::project::parse_project_id)]
+    project: ProjectId,
     /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
     #[arg(value_name = "ID")]
     id: NoteSelector,
@@ -115,9 +115,9 @@ const NOTE_EDITS: &str = "note_edits";
 #[derive(Args, Debug)]
 #[command(group(ArgGroup::new(NOTE_EDITS).required(true).multiple(true)))]
 pub(crate) struct EditArguments {
-    /// Managed project name or id
-    #[arg(value_name = "PROJECT")]
-    project: ProjectSelector,
+    /// Managed project ID (two to four ASCII letters)
+    #[arg(value_name = "PROJECT", value_parser = crate::project::parse_project_id)]
+    project: ProjectId,
     /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
     #[arg(value_name = "ID")]
     id: NoteSelector,
@@ -208,7 +208,7 @@ pub async fn run(
     colors: NoteStatusColors,
     client: &NoteClient,
     projects: &ProjectClient,
-) -> anyhow::Result<String> {
+) -> Result<String, crate::error::Error> {
     match &arguments.command {
         Command::List(arguments) => list(arguments, console, colors, client, projects).await,
         Command::Add(arguments) => add(arguments, console, client, projects).await,
@@ -223,7 +223,7 @@ async fn list(
     colors: NoteStatusColors,
     client: &NoteClient,
     projects: &ProjectClient,
-) -> anyhow::Result<String> {
+) -> Result<String, crate::error::Error> {
     client
         .list_notes(ListNotesRequest {
             project_id: crate::project::resolve_project_id(&arguments.project, projects)
@@ -237,7 +237,7 @@ async fn list(
             limit: arguments.number.unwrap_or_default() as u64,
         })
         .await
-        .map_err(crate::rpc_error)
+        .map_err(crate::error::Error::from)
         .map(|result| render_listed(&result, colors, console.color()))
 }
 
@@ -246,7 +246,7 @@ async fn add(
     console: Console,
     client: &NoteClient,
     projects: &ProjectClient,
-) -> anyhow::Result<String> {
+) -> Result<String, crate::error::Error> {
     let (title, content) = match (
         &arguments.note,
         &arguments.structured.title,
@@ -257,7 +257,8 @@ async fn add(
         _ => {
             return Err(anyhow::anyhow!(
                 "Provide either '<title> / <content>' or both --title and --content."
-            ));
+            )
+            .into());
         }
     };
     client
@@ -274,7 +275,7 @@ async fn add(
             date: arguments.date.map(|date| date.to_string()),
         })
         .await
-        .map_err(crate::rpc_error)
+        .map_err(crate::error::Error::from)
         .map(|result| render_added(&result, console.color()))
 }
 
@@ -283,7 +284,7 @@ async fn remove(
     console: Console,
     client: &NoteClient,
     projects: &ProjectClient,
-) -> anyhow::Result<String> {
+) -> Result<String, crate::error::Error> {
     let confirmation_mode = console.confirmation_mode(arguments.assume_yes)?;
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
     let outcome = match client
@@ -300,10 +301,10 @@ async fn remove(
     {
         Ok(outcome) => outcome,
         Err(ConfirmedRequestError::Operation(error)) => {
-            return Err(anyhow::anyhow!(error.message().to_string()));
+            return Err(anyhow::anyhow!(error.message().to_string()).into());
         }
         Err(ConfirmedRequestError::Prompt(source)) => {
-            return Err(prompt_error("note removal", source));
+            return Err(prompt_error("note removal", source).into());
         }
     };
     match outcome.outcome.as_ref() {
@@ -313,9 +314,7 @@ async fn remove(
         Some(delete_note_result::Outcome::Aborted(note)) => {
             Ok(format!("# remove {}: aborted\nnothing deleted.\n", note.id))
         }
-        None => Err(anyhow::anyhow!(
-            "pwf-server returned an invalid note removal outcome"
-        )),
+        None => Err(anyhow::anyhow!("pwf-server returned an invalid note removal outcome").into()),
     }
 }
 
@@ -324,7 +323,7 @@ async fn edit(
     console: Console,
     client: &NoteClient,
     projects: &ProjectClient,
-) -> anyhow::Result<String> {
+) -> Result<String, crate::error::Error> {
     let title = if arguments.shorthand_title.is_empty() {
         arguments.title.clone()
     } else {
@@ -373,7 +372,7 @@ async fn edit(
             ),
         })
         .await
-        .map_err(crate::rpc_error)
+        .map_err(crate::error::Error::from)
         .map(|result| render_edited(&result, console.color()))
 }
 

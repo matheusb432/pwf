@@ -399,10 +399,10 @@ impl TestServer {
             .task()
             .create_task(pb::CreateTaskRequest {
                 project_id: "FOO".to_string(),
-                prompt: Some(pb::create_task_request::Prompt::Structured(
-                    pb::StructuredTaskPrompt {
+                body: Some(pb::create_task_request::Body::Structured(
+                    pb::StructuredTaskBody {
                         title: title.to_string(),
-                        lanes: Some(pb::TaskLanes {
+                        sections: Some(pb::TaskMarkerSections {
                             goals: vec!["exercise the real server".to_string()],
                             context: Vec::new(),
                             constraints: Vec::new(),
@@ -633,10 +633,10 @@ async fn v1_create_task_returns_the_committed_task_summary() -> anyhow::Result<(
     )
     .create_task(Request::new(pb::CreateTaskRequest {
         project_id: "FOO".to_string(),
-        prompt: Some(pb::create_task_request::Prompt::Structured(
-            pb::StructuredTaskPrompt {
+        body: Some(pb::create_task_request::Body::Structured(
+            pb::StructuredTaskBody {
                 title: "task summary".to_string(),
-                lanes: Some(pb::TaskLanes {
+                sections: Some(pb::TaskMarkerSections {
                     goals: vec!["return the committed task summary".to_string()],
                     context: Vec::new(),
                     constraints: Vec::new(),
@@ -675,10 +675,10 @@ async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
         .task()
         .create_task(pb::CreateTaskRequest {
             project_id: "FOO".to_string(),
-            prompt: Some(pb::create_task_request::Prompt::Structured(
-                pb::StructuredTaskPrompt {
+            body: Some(pb::create_task_request::Body::Structured(
+                pb::StructuredTaskBody {
                     title: "dependent task".to_string(),
-                    lanes: Some(pb::TaskLanes {
+                    sections: Some(pb::TaskMarkerSections {
                         goals: vec!["exercise the DAG endpoint".to_string()],
                         context: Vec::new(),
                         constraints: Vec::new(),
@@ -763,10 +763,10 @@ async fn v1_repeated_requests_apply_each_create_and_append() -> anyhow::Result<(
     let original_id = server.add_project_and_task().await?;
     let create = pb::CreateTaskRequest {
         project_id: "FOO".to_string(),
-        prompt: Some(pb::create_task_request::Prompt::Structured(
-            pb::StructuredTaskPrompt {
+        body: Some(pb::create_task_request::Body::Structured(
+            pb::StructuredTaskBody {
                 title: "repeated task".to_string(),
-                lanes: Some(pb::TaskLanes {
+                sections: Some(pb::TaskMarkerSections {
                     goals: vec!["exercise independent mutations".to_string()],
                     context: Vec::new(),
                     constraints: Vec::new(),
@@ -794,12 +794,10 @@ async fn v1_repeated_requests_apply_each_create_and_append() -> anyhow::Result<(
     let append = pb::UpdateTaskRequest {
         id: first.id.clone(),
         content: Some(pb::TaskContentEdit {
-            content: Some(pb::task_content_edit::Content::Append(
-                pb::AppendTaskPrompt {
-                    title: None,
-                    prompt: "additional /c repeated context".to_string(),
-                },
-            )),
+            content: Some(pb::task_content_edit::Content::Append(pb::AppendTaskBody {
+                title: None,
+                body: "additional /c repeated context".to_string(),
+            })),
         }),
         blocked_by: None,
         effort: None,
@@ -1127,14 +1125,14 @@ async fn task_list_summary_omits_detailed_payload() -> anyhow::Result<()> {
         Some(record.source.as_str())
     );
     assert_eq!(detailed.tasks[0].created_at, record.created_at);
-    assert_eq!(detailed.tasks[0].prompt, record.body);
+    assert_eq!(detailed.tasks[0].body, record.body);
     let mut expected = detailed.tasks;
     for task in &mut expected {
         task.source = None;
         task.created_at = None;
         task.completed_at = None;
         task.commits = None;
-        task.prompt.clear();
+        task.body.clear();
         task.project_path = None;
         task.file_path.clear();
         task.launch_issues.clear();
@@ -1339,7 +1337,7 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
         .task()
         .create_task(pb::CreateTaskRequest {
             project_id: "FOO".to_string(),
-            prompt: Some(pb::create_task_request::Prompt::Shorthand(
+            body: Some(pb::create_task_request::Body::Shorthand(
                 "bounded collection".to_string(),
             )),
             blocked_by: Vec::new(),
@@ -2245,10 +2243,10 @@ async fn project_operations_require_ids_and_report_missing_projects() -> anyhow:
             .task()
             .create_task(pb::CreateTaskRequest {
                 project_id: project_id.to_string(),
-                prompt: Some(pb::create_task_request::Prompt::Structured(
-                    pb::StructuredTaskPrompt {
+                body: Some(pb::create_task_request::Body::Structured(
+                    pb::StructuredTaskBody {
                         title: "rejected task".to_string(),
-                        lanes: Some(pb::TaskLanes {
+                        sections: Some(pb::TaskMarkerSections {
                             goals: vec!["require an ID".to_string()],
                             ..Default::default()
                         }),
@@ -2488,7 +2486,7 @@ async fn clone_copies_into_an_explicit_project_and_requires_an_existing_source()
         })
         .await?;
     assert_eq!(cloned.title, source.title);
-    assert_eq!(cloned.prompt, source.prompt);
+    assert_eq!(cloned.body, source.body);
     assert_eq!(cloned.status, pwf_models::task::TaskStatus::Active);
     assert!(cloned.completed_at.is_none());
     assert!(cloned.commits.is_none());
@@ -2529,7 +2527,7 @@ async fn clone_reports_invalid_input_and_missing_sources() -> anyhow::Result<()>
 }
 
 #[tokio::test]
-async fn project_resolution_returns_one_id_and_classifies_invalid_and_missing_selectors()
+async fn project_lookup_accepts_only_ids_and_classifies_invalid_and_missing_values()
 -> anyhow::Result<()> {
     let server = TestServer::start(TEST_TIMEOUT).await?;
     server.add_project_and_task().await?;
@@ -2537,16 +2535,16 @@ async fn project_resolution_returns_one_id_and_classifies_invalid_and_missing_se
         server.channel().await?,
         server::ReleaseRequest,
     );
-    for selector in ["foo", "FOO", " Foo ", "FOO-BAR"] {
+    for id in ["foo", "FOO", " Foo "] {
         let response = client
-            .resolve_project(pb::ResolveProjectRequest {
-                selector: selector.into(),
+            .get_project(pb::GetProjectRequest {
+                id: id.into(),
                 status: ProjectStatusFilter::ActiveOnly as i32,
             })
             .await?;
         assert_eq!(response.into_inner().id, "FOO");
     }
-    for (selector, status, expected) in [
+    for (id, status, expected) in [
         (
             " ",
             ProjectStatusFilter::ActiveOnly as i32,
@@ -2559,14 +2557,19 @@ async fn project_resolution_returns_one_id_and_classifies_invalid_and_missing_se
         ),
         ("foo", 999, Code::InvalidArgument),
         (
-            "missing",
+            "foo-bar",
+            ProjectStatusFilter::ActiveOnly as i32,
+            Code::InvalidArgument,
+        ),
+        (
+            "MISS",
             ProjectStatusFilter::ActiveOnly as i32,
             Code::NotFound,
         ),
     ] {
         let error = client
-            .resolve_project(pb::ResolveProjectRequest {
-                selector: selector.into(),
+            .get_project(pb::GetProjectRequest {
+                id: id.into(),
                 status,
             })
             .await
@@ -2579,16 +2582,16 @@ async fn project_resolution_returns_one_id_and_classifies_invalid_and_missing_se
         .pause_project(pb::PauseProjectRequest { id: "FOO".into() })
         .await?;
     let error = client
-        .resolve_project(pb::ResolveProjectRequest {
-            selector: "foo".into(),
+        .get_project(pb::GetProjectRequest {
+            id: "foo".into(),
             status: ProjectStatusFilter::ActiveOnly as i32,
         })
         .await
         .unwrap_err();
     assert_eq!(error.code(), Code::NotFound);
     let response = client
-        .resolve_project(pb::ResolveProjectRequest {
-            selector: "foo".into(),
+        .get_project(pb::GetProjectRequest {
+            id: "foo".into(),
             status: ProjectStatusFilter::IncludingPaused as i32,
         })
         .await?;

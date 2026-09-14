@@ -382,13 +382,25 @@ fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, Obsidi
     insert_next(store, &foo_project(store), new)
 }
 
+fn next_test_task_id(
+    store: &ObsidianStore,
+    project: &Project,
+) -> Result<TaskId, ObsidianStoreError> {
+    let number = TaskVault::highest_task_id(store, project)?.map_or(0, |id| id.number()) + 1;
+    Ok(TaskId::try_new(format!("{}-{number:04}", project.id)).unwrap())
+}
+
 fn insert_next(
     store: &ObsidianStore,
     project: &Project,
     new: NewTask,
 ) -> Result<TaskRecord, ObsidianStoreError> {
-    let id = TaskVault::next_task_id(store, project)?;
-    TaskVault::insert_task(store, project, &id, new)
+    let id = next_test_task_id(store, project)?;
+    TaskVault::insert_task(
+        store,
+        pwf_application::ports::task_vault::TaskInsertion::new(project, &id, new),
+    )?;
+    Ok(TaskVault::get_task_record(store, project, &id)?.unwrap())
 }
 
 fn new_task(body: &str, title: &str) -> NewTask {
@@ -587,7 +599,7 @@ fn generic_add_writes_tags_and_omits_absent_tags() {
 }
 
 #[test]
-fn generic_insert_allocates_after_greatest_frontmatter_id() {
+fn highest_task_id_uses_frontmatter_instead_of_filenames() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
@@ -610,40 +622,9 @@ fn generic_insert_allocates_after_greatest_frontmatter_id() {
     let store = store_with_index_identity(&notes_dir.join("foo"));
     let project = foo_project(&store);
 
-    let record = insert_next(&store, &project, new_task("next task", "next task")).unwrap();
-
-    assert_eq!(record.id, TaskId::try_new("FOO-0010").unwrap());
-}
-
-#[test]
-fn generic_insert_reports_exhausted_task_id_sequence() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("foo.md"),
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-9999]]\n",
-    )
-    .unwrap();
-    write_note(
-        &project_dir.join("FOO-9999.md"),
-        "last task",
-        "2026-07-01",
-        None,
-        None,
-        None,
-        "body",
-    );
-    let store = store_with_index_identity(&project_dir);
-    let project = foo_project(&store);
-
-    let error = insert_next(&store, &project, new_task("next task", "next task")).unwrap_err();
-
-    assert_matches!(
-        error,
-        ObsidianStoreError::TaskIdSequenceExhausted { ref project_id }
-            if project_id.as_ref() == "FOO"
+    assert_eq!(
+        TaskVault::highest_task_id(&store, &project).unwrap(),
+        Some(TaskId::try_new("FOO-0009").unwrap())
     );
 }
 
@@ -1427,7 +1408,7 @@ fn exact_insert_rejects_an_id_occupied_after_allocation_without_replacing_it() {
     let project_dir = notes_dir.join("foo");
     let store = store_with_index_identity(&project_dir);
     let project = foo_project(&store);
-    let id = TaskVault::next_task_id(&store, &project).unwrap();
+    let id = next_test_task_id(&store, &project).unwrap();
     let path = project_dir.join("FOO-0001.md");
     std::fs::create_dir_all(&project_dir).unwrap();
     write_note(
@@ -1443,9 +1424,11 @@ fn exact_insert_rejects_an_id_occupied_after_allocation_without_replacing_it() {
 
     let error = TaskVault::insert_task(
         &store,
-        &project,
-        &id,
-        new_task("replacement", "replacement"),
+        pwf_application::ports::task_vault::TaskInsertion::new(
+            &project,
+            &id,
+            new_task("replacement", "replacement"),
+        ),
     )
     .unwrap_err();
 
@@ -1803,7 +1786,7 @@ fn own_dependency_writes_refresh_both_list_and_graph_snapshots_immediately() {
 }
 
 #[test]
-fn task_allocation_and_mutation_do_not_decode_unrelated_bodies() {
+fn task_sequence_seeding_and_mutation_do_not_decode_unrelated_bodies() {
     let directory = tempfile::tempdir().unwrap();
     let store = store_for_tasks(directory.path());
     let project = foo_project(&store);
@@ -1812,9 +1795,20 @@ fn task_allocation_and_mutation_do_not_decode_unrelated_bodies() {
         b"---\nid: FOO-0001\n---\n\xff",
     )
     .unwrap();
-    let id = TaskVault::next_task_id(&store, &project).unwrap();
-    assert_eq!(id.as_ref(), "FOO-0002");
-    TaskVault::insert_task(&store, &project, &id, new_task("body", "selected")).unwrap();
+    assert_eq!(
+        TaskVault::highest_task_id(&store, &project).unwrap(),
+        Some(TaskId::try_new("FOO-0001").unwrap())
+    );
+    let id = TaskId::try_new("FOO-0002").unwrap();
+    TaskVault::insert_task(
+        &store,
+        pwf_application::ports::task_vault::TaskInsertion::new(
+            &project,
+            &id,
+            new_task("body", "selected"),
+        ),
+    )
+    .unwrap();
     commit_for_task(
         &store,
         &project,
@@ -1906,22 +1900,31 @@ fn task_crud_does_not_create_or_read_the_generated_snapshot() {
 }
 
 #[test]
-fn exact_insert_rejects_an_existing_frontmatter_id_at_a_descriptive_path() {
+fn insertion_does_not_scan_existing_tasks() {
     let directory = tempfile::tempdir().unwrap();
     let store = store_for_tasks(directory.path());
-    let path = directory.path().join("descriptive.md");
-    let source = "---\nid: FOO-0001\ntitle: Existing\n---\nbody\n";
-    std::fs::write(&path, source).unwrap();
-    let error = TaskVault::insert_task(
-        &store,
-        &foo_project(&store),
-        &"FOO-0001".parse().unwrap(),
-        new_task("new", "New"),
+    let project = foo_project(&store);
+    std::fs::write(
+        directory.path().join("descriptive.md"),
+        "---\nid: FOO-0001\ntitle: Existing\n---\nbody\n",
     )
-    .unwrap_err();
-    assert_matches!(error, ObsidianStoreError::TaskIdOccupied { path: occupied, .. } if occupied == path);
-    assert_eq!(std::fs::read_to_string(path).unwrap(), source);
-    assert!(!directory.path().join("FOO-0001.md").exists());
+    .unwrap();
+    let before = crate::obsidian::identity::task_directory_scan_count();
+    let id = TaskId::try_new("FOO-0002").unwrap();
+    TaskVault::insert_task(
+        &store,
+        pwf_application::ports::task_vault::TaskInsertion::new(
+            &project,
+            &id,
+            new_task("new", "New"),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::obsidian::identity::task_directory_scan_count() - before,
+        0
+    );
+    assert!(directory.path().join("FOO-0002.md").exists());
 }
 
 #[test]

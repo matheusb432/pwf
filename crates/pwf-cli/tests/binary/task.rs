@@ -9,7 +9,68 @@ use crate::support::{
 };
 
 #[test]
-fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
+fn add_and_edit_short_options_persist_task_metadata() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    for title in ["first blocker", "second blocker"] {
+        fixture
+            .database
+            .command()
+            .args(["task", "add", "foo", title])
+            .assert()
+            .success();
+    }
+
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo",
+            "exercise short options",
+            "-b",
+            "[[FOO-0001]]",
+            "-t",
+            "rust",
+            "-e",
+            "high",
+            "-p",
+            "low",
+        ])
+        .assert()
+        .success()
+        .stderr("");
+
+    let id = task_id("FOO-0003").unwrap();
+    let added = task_json(&fixture.database, &id).unwrap();
+    assert_eq!(added["blocked_by"], serde_json::json!(["FOO-0001"]));
+    assert_eq!(added["tags"], serde_json::json!(["rust"]));
+    assert_eq!(added["effort"], "high");
+    assert_eq!(added["priority"], "low");
+
+    fixture
+        .database
+        .command()
+        .args([
+            "task", "edit", "FOO-0003", "-b", "FOO-0002", "-t", "sqlite", "-e", "medium", "-p",
+            "highest",
+        ])
+        .assert()
+        .success()
+        .stderr("");
+
+    let edited = task_json(&fixture.database, &id).unwrap();
+    assert_eq!(
+        edited["blocked_by"],
+        serde_json::json!(["FOO-0001", "FOO-0002"])
+    );
+    assert_eq!(edited["tags"], serde_json::json!(["rust", "sqlite"]));
+    assert_eq!(edited["effort"], "medium");
+    assert_eq!(edited["priority"], "highest");
+}
+
+#[test]
+fn machine_add_maps_each_explicit_value_without_parsing_marker_sections() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
 
     fixture
@@ -18,7 +79,7 @@ fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
         .args([
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "Web: UI fixes; keep #123 and \"quotes\"",
             "--goal",
@@ -39,7 +100,7 @@ fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
     let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
     assert_eq!(task["title"], "Web: UI fixes; keep #123 and \"quotes\"");
     assert_eq!(
-        task["prompt"],
+        task["body"],
         "## Goals\n\n- preserve the authored goal\n- keep /d as literal text\n\n## Context\n\n- the machine supplies independent values\n\n## Constraints\n\n- preserve shorthand mode\n\n## Done When\n\n- both input modes are covered"
     );
 }
@@ -53,7 +114,7 @@ fn list_priority_filters_and_renders_the_selected_tier() {
             .command()
             .args([
                 "add",
-                "foo-bar",
+                "foo",
                 "--title",
                 title,
                 "--goal",
@@ -71,7 +132,7 @@ fn list_priority_filters_and_renders_the_selected_tier() {
         .args([
             "list",
             "--project",
-            "foo-bar",
+            "foo",
             "--all",
             "--long=rich",
             "--priority",
@@ -96,7 +157,7 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
         .command()
         .args([
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "orange task",
             "--goal",
@@ -112,7 +173,7 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
     let plain = fixture
         .database
         .command()
-        .args(["list", "--project", "foo-bar", "--all"])
+        .args(["list", "--project", "foo", "--all"])
         .output()
         .unwrap();
     assert!(plain.status.success());
@@ -123,8 +184,8 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
     assert_plain(&stdout);
 
     for arguments in [
-        ["foo-bar"].as_slice(),
-        ["list", "--project", "foo-bar", "--all"].as_slice(),
+        ["foo"].as_slice(),
+        ["list", "--project", "foo", "--all"].as_slice(),
     ] {
         let output = fixture
             .database
@@ -157,7 +218,7 @@ fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
         .write_user_config("[colors.task]\nactive = \"#fff\"\n")
         .unwrap();
 
-    let output = fixture.database.command().arg("foo-bar").output().unwrap();
+    let output = fixture.database.command().arg("foo").output().unwrap();
 
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
@@ -171,7 +232,7 @@ fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
 }
 
 #[test]
-fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
+fn root_edit_replaces_marker_sections_with_explicit_remove_then_add_actions() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
@@ -179,7 +240,7 @@ fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
         .args([
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "original task",
             "--goal",
@@ -221,7 +282,7 @@ fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
     let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
     assert_eq!(task["title"], "[WIP]: Edited task; keep #456");
     assert_eq!(
-        task["prompt"],
+        task["body"],
         "## Goals\n\n- new goal /c stays literal\n\n## Context\n\n- new context\n\n## Constraints\n\n- new constraint\n\n## Done When\n\n- new outcome"
     );
 }
@@ -336,7 +397,7 @@ fn task_dag_render_fixture() -> ManagedProject {
         .args([
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "prepare graph data",
             "--goal",
@@ -356,7 +417,7 @@ fn task_dag_render_fixture() -> ManagedProject {
         .args([
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "cancel obsolete renderer",
             "--goal",
@@ -382,7 +443,7 @@ fn task_dag_render_fixture() -> ManagedProject {
         .args([
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "render graph view",
             "--goal",
@@ -403,7 +464,7 @@ fn invalid_argument_combinations_fail_before_mutation() {
     fixture
         .database
         .command()
-        .args(["add", "foo-bar", "original / keep this goal"])
+        .args(["add", "foo", "original / keep this goal"])
         .assert()
         .success();
     let before = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
@@ -412,7 +473,7 @@ fn invalid_argument_combinations_fail_before_mutation() {
         vec![
             "edit",
             "FOO-0001",
-            "--prompt",
+            "--body",
             "replacement / goal",
             "--add-goal",
             "ambiguous",
@@ -436,23 +497,23 @@ fn invalid_argument_combinations_fail_before_mutation() {
         vec!["task", "clone"],
         vec!["task", "get"],
         vec!["task", "add", "--title", "missing project"],
-        vec!["add", "foo-bar", "shorthand", "--title", "explicit"],
-        vec!["add", "foo-bar", "--goal", "missing title"],
-        vec!["note", "edit", "foo-bar", "1"],
+        vec!["add", "foo", "shorthand", "--title", "explicit"],
+        vec!["add", "foo", "--goal", "missing title"],
+        vec!["note", "edit", "foo", "1"],
         vec![
             "note",
             "edit",
-            "foo-bar",
+            "foo",
             "1",
             "--domain",
             "docs",
             "--remove-domain",
         ],
-        vec!["note", "add", "foo-bar", "--title", "missing content"],
+        vec!["note", "add", "foo", "--title", "missing content"],
         vec![
             "note",
             "add",
-            "foo-bar",
+            "foo",
             "title / body",
             "--title",
             "explicit",
@@ -486,14 +547,14 @@ fn invalid_argument_combinations_fail_before_mutation() {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn remove_prompt_identifies_closed_status_before_deletion() {
+fn remove_confirmation_identifies_closed_status_before_deletion() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
         .command()
         .args([
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "completed work",
             "--goal",
@@ -548,7 +609,7 @@ fn configured_list_page_size_applies_to_every_list_spelling() -> anyhow::Result<
             .command()
             .args([
                 "add",
-                "foo-bar",
+                "foo",
                 "--title",
                 title,
                 "--goal",
@@ -561,9 +622,9 @@ fn configured_list_page_size_applies_to_every_list_spelling() -> anyhow::Result<
         .database
         .write_user_config("default_list_page_size = 2\n")?;
     for prefix in [
-        vec!["task", "list", "--project", "foo-bar"],
-        vec!["list", "--project", "foo-bar"],
-        vec!["foo-bar"],
+        vec!["task", "list", "--project", "foo"],
+        vec!["list", "--project", "foo"],
+        vec!["foo"],
     ] {
         for (options, expected) in [
             (vec![], vec!["FOO-0003", "FOO-0002"]),
@@ -592,7 +653,7 @@ fn configured_list_page_size_applies_to_every_list_spelling() -> anyhow::Result<
     let output = fixture
         .database
         .command()
-        .args(["foo-bar", "--long=json"])
+        .args(["foo", "--long=json"])
         .output()?;
     assert!(output.status.success());
     let tasks: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)?;
@@ -612,7 +673,7 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
     ] {
         let mut arguments = vec![
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             title,
             "--goal",
@@ -635,9 +696,9 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
         .database
         .write_user_config("default_priority = \"highest\"\ndefault_sort_order = \"priority\"\n")?;
     for prefix in [
-        vec!["task", "list", "--project", "foo-bar"],
-        vec!["list", "--project", "foo-bar"],
-        vec!["foo-bar"],
+        vec!["task", "list", "--project", "foo"],
+        vec!["list", "--project", "foo"],
+        vec!["foo"],
     ] {
         let output = fixture.database.command().args(&prefix).output()?;
         assert!(output.status.success());
@@ -667,7 +728,7 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
         let output = fixture
             .database
             .command()
-            .args(["list", "--project", "foo-bar", "--order", order])
+            .args(["list", "--project", "foo", "--order", order])
             .output()?;
         assert!(output.status.success());
         assert_list_ids(&String::from_utf8(output.stdout)?, &expected);
@@ -678,7 +739,7 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
         .args([
             "list",
             "--project",
-            "foo-bar",
+            "foo",
             "--long=rich",
             "--priority",
             "highest",
@@ -691,7 +752,7 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
     assert!(task_json(&fixture.database, &task_id("FOO-0003")?)?["priority"].is_null());
 
     fixture.database.write_user_config("")?;
-    let output = fixture.database.command().args(["foo-bar"]).output()?;
+    let output = fixture.database.command().args(["foo"]).output()?;
     assert!(output.status.success());
     assert_list_ids(
         &String::from_utf8(output.stdout)?,
@@ -720,7 +781,7 @@ fn task_mutations_print_one_summary_line() {
             vec![
                 "task",
                 "add",
-                "foo-bar",
+                "foo",
                 "--title",
                 "first title",
                 "--goal",
@@ -778,7 +839,7 @@ fn task_mutations_use_configured_lifecycle_colors() {
             vec![
                 "task",
                 "add",
-                "foo-bar",
+                "foo",
                 "--title",
                 "colored task",
                 "--goal",
@@ -838,7 +899,7 @@ fn task_mutations_use_configured_lifecycle_colors() {
 }
 
 #[test]
-fn project_selectors_match_titles_before_ids_and_exclude_paused_projects() {
+fn project_ids_ignore_title_collisions_and_exclude_paused_projects() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "alt").unwrap();
     let other = tempfile::tempdir().unwrap();
     let tasks = other.path().join("tasks");
@@ -849,56 +910,47 @@ fn project_selectors_match_titles_before_ids_and_exclude_paused_projects() {
         other.path(),
         &tasks,
     );
-
-    for selector in ["ALT", "foo"] {
+    for id in ["ALT", "foo"] {
         let output = fixture
             .database
             .command_args(&[
                 "task",
                 "add",
-                selector,
+                id,
                 "--title",
                 "selected task",
                 "--goal",
-                "use the selected project",
+                "use the exact project ID",
             ])
             .success_stdout();
-        assert!(output.contains("FOO-"), "{output}");
+        assert!(
+            output.contains(&format!("{}-0001", id.to_ascii_uppercase())),
+            "{output}"
+        );
     }
     let listed = fixture
         .database
         .command_args(&["task", "list", "--project", "ALT"])
         .success_stdout();
-    assert!(listed.contains("FOO-0001"));
-    assert!(listed.contains("FOO-0002"));
-
+    assert!(listed.contains("ALT-0001"));
+    assert!(!listed.contains("FOO-0001"));
     fixture
         .database
         .command_args(&["project", "pause", "FOO", "--json"])
         .success_json();
-    let output = fixture
-        .database
-        .command_args(&[
-            "task",
-            "add",
-            "ALT",
-            "--title",
-            "fallback task",
-            "--goal",
-            "use the active ID match",
-        ])
-        .success_stdout();
-    assert!(output.contains("ALT-0001"), "{output}");
     let error = fixture
         .database
         .command_args(&["task", "list", "--project", "foo"])
         .output()
         .unwrap();
-    assert!(!error.status.success());
+    assert_eq!(error.status.code(), Some(2));
     assert!(error.stdout.is_empty());
     let diagnostic = String::from_utf8(error.stderr).unwrap();
-    assert!(diagnostic.contains("Unknown managed project identifier: foo"));
-    assert!(diagnostic.contains("Managed project identifiers: other"));
+    assert!(
+        diagnostic.starts_with("error: invalid value 'foo'"),
+        "{diagnostic}"
+    );
+    assert!(!diagnostic.contains("tip:"), "{diagnostic}");
 }
 
 #[test]
@@ -909,7 +961,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
         .command_args(&[
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "format task",
             "--goal",
@@ -941,7 +993,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
     assert_eq!(json["effort"], "high");
     assert_eq!(json["priority"], "highest");
     assert_eq!(json["tags"], serde_json::json!(["rust", "sqlite"]));
-    assert_eq!(json["prompt"], "authored body");
+    assert_eq!(json["body"], "authored body");
 
     let malformed = source.replace("effort: high", "effort: extreme");
     std::fs::write(path, &malformed).unwrap();
@@ -988,12 +1040,12 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
 }
 
 #[test]
-fn clone_routes_project_selectors_and_preserves_authored_content() {
+fn clone_routes_project_ids_and_preserves_authored_content() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
         .command()
-        .args(["add", "foo-bar", "blocker"])
+        .args(["add", "foo", "blocker"])
         .assert()
         .success();
     fixture
@@ -1002,7 +1054,7 @@ fn clone_routes_project_selectors_and_preserves_authored_content() {
         .args([
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "original task",
             "--goal",
@@ -1021,7 +1073,7 @@ fn clone_routes_project_selectors_and_preserves_authored_content() {
     let original = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
     for arguments in [
         vec!["task", "clone", "foo2"],
-        vec!["clone", "--id", "FOO-0002", "--project", "FOO-BAR"],
+        vec!["clone", "--id", "FOO-0002", "--project", "FOO"],
     ] {
         let output = fixture.database.command().args(arguments).output().unwrap();
         assert!(
@@ -1035,14 +1087,7 @@ fn clone_routes_project_selectors_and_preserves_authored_content() {
     }
     for id in ["FOO-0003", "FOO-0004"] {
         let cloned = task_json(&fixture.database, &task_id(id).unwrap()).unwrap();
-        for field in [
-            "title",
-            "prompt",
-            "tags",
-            "effort",
-            "priority",
-            "blocked_by",
-        ] {
+        for field in ["title", "body", "tags", "effort", "priority", "blocked_by"] {
             assert_eq!(cloned[field], original[field], "{id}: {field}");
         }
     }
@@ -1247,7 +1292,7 @@ fn backlog_is_hidden_by_default_and_retains_its_color_when_edited() {
         .args([
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "deferred work",
             "--goal",
@@ -1283,9 +1328,9 @@ fn backlog_is_hidden_by_default_and_retains_its_color_when_edited() {
     assert_eq!(task_json(&fixture.database, &id).unwrap(), backlogged);
 
     for args in [
-        vec!["task", "list", "--project", "foo-bar"],
-        vec!["list", "--project", "foo-bar"],
-        vec!["foo-bar"],
+        vec!["task", "list", "--project", "foo"],
+        vec!["list", "--project", "foo"],
+        vec!["foo"],
     ] {
         let output = fixture.database.command().args(&args).output().unwrap();
         assert!(output.status.success(), "{args:?}: {output:?}");
@@ -1342,7 +1387,7 @@ fn activate_from_backlog_and_already_active_need_no_confirmation() {
         .args([
             "task",
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "ready later",
             "--goal",
@@ -1392,7 +1437,7 @@ fn closed_task_activation_requires_confirmation_before_removing_data() {
         .database
         .command()
         .args([
-            "task", "add", "foo-bar", "--title", "finished", "--goal", "ship",
+            "task", "add", "foo", "--title", "finished", "--goal", "ship",
         ])
         .assert()
         .success();
@@ -1421,7 +1466,7 @@ fn task_content_formats_preserve_markdown_and_share_rich_output() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
-        .command_args(&["add", "foo-bar", "sample"])
+        .command_args(&["add", "foo", "sample"])
         .success_stdout();
     let path = fixture
         .database
@@ -1436,7 +1481,7 @@ fn task_content_formats_preserve_markdown_and_share_rich_output() {
         .success_stdout();
     let list = fixture
         .database
-        .command_args(&["list", "--project", "foo-bar", "--long=rich"])
+        .command_args(&["list", "--project", "foo", "--long=rich"])
         .success_stdout();
     assert_eq!(get, list);
     assert!(
@@ -1454,8 +1499,8 @@ fn task_content_formats_preserve_markdown_and_share_rich_output() {
     for arguments in [
         vec!["get", "FOO-0001"],
         vec!["get", "FOO-0001", "--long=md"],
-        vec!["list", "--project", "foo-bar", "--long"],
-        vec!["list", "--project", "foo-bar", "--long=md"],
+        vec!["list", "--project", "foo", "--long"],
+        vec!["list", "--project", "foo", "--long=md"],
     ] {
         let output = fixture
             .database
@@ -1470,7 +1515,7 @@ fn task_content_formats_preserve_markdown_and_share_rich_output() {
         .success_json();
     let listed = fixture
         .database
-        .command_args(&["list", "--project", "foo-bar", "--long=json"])
+        .command_args(&["list", "--project", "foo", "--long=json"])
         .success_json();
     assert_eq!(listed, serde_json::json!([single]));
     fixture
@@ -1506,7 +1551,7 @@ fn task_content_terminal_defaults_and_explicit_markdown_ignore_color_selection()
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), &project_name).unwrap();
     fixture
         .database
-        .command_args(&["add", &project_name, "sample"])
+        .command_args(&["add", "foo", "sample"])
         .success_stdout();
     let path = fixture
         .database
@@ -1519,7 +1564,7 @@ fn task_content_terminal_defaults_and_explicit_markdown_ignore_color_selection()
     for arguments in [
         vec!["get", "FOO-0001"],
         vec!["get", "FOO-0001", "--long"],
-        vec!["list", "--project", &project_name, "--long"],
+        vec!["list", "--project", "foo", "--long"],
     ] {
         for color in [false, true] {
             let mut command = fixture.database.command_args(&arguments);
@@ -1575,7 +1620,7 @@ fn task_content_terminal_defaults_and_explicit_markdown_ignore_color_selection()
     }
     for arguments in [
         vec!["get", "FOO-0001", "--long=md"],
-        vec!["list", "--project", &project_name, "--long=md"],
+        vec!["list", "--project", "foo", "--long=md"],
     ] {
         let mut command = fixture.database.command_args(&arguments);
         command.color();
@@ -1597,13 +1642,13 @@ fn task_content_lists_keep_machine_formats_clean_and_preserve_file_bytes() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     let empty = fixture
         .database
-        .command_args(&["list", "--project", "foo-bar", "--long=json"])
+        .command_args(&["list", "--project", "foo", "--long=json"])
         .success_json();
     assert_eq!(empty, serde_json::json!([]));
     for title in ["first", "second"] {
         fixture
             .database
-            .command_args(&["add", "foo-bar", title])
+            .command_args(&["add", "foo", title])
             .success_stdout();
     }
     let path = fixture
@@ -1617,7 +1662,7 @@ fn task_content_lists_keep_machine_formats_clean_and_preserve_file_bytes() {
         .command_args(&[
             "list",
             "--project",
-            "foo-bar",
+            "foo",
             "--long=md",
             "--order=id:asc",
             "-n",
@@ -1628,7 +1673,7 @@ fn task_content_lists_keep_machine_formats_clean_and_preserve_file_bytes() {
     assert_eq!(markdown, format!("{source}\n"));
     let array = fixture
         .database
-        .command_args(&["list", "--project", "foo-bar", "--long=json", "-n", "1"])
+        .command_args(&["list", "--project", "foo", "--long=json", "-n", "1"])
         .color()
         .success_json();
     assert_eq!(array.as_array().unwrap().len(), 1);

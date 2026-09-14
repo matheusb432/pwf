@@ -5,8 +5,8 @@ use pwf_wire::{
     patch_field::PatchField,
     set_field::SetField,
     task::{
-        EditTask, EditTaskContent, RawTaskTags, TaskEdits, TaskLane, TaskLaneEdits, TaskLanes,
-        TaskRecord,
+        EditTask, EditTaskContent, RawTaskTags, TaskEdits, TaskMarkerSection,
+        TaskMarkerSectionEdits, TaskMarkerSections, TaskRecord,
     },
 };
 
@@ -68,9 +68,14 @@ async fn run(
     store: &InMemoryStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), EditTaskError> {
-    edit_task::execute(command, store, pool)
-        .await
-        .map(|result| result.outcome)
+    edit_task::execute(
+        command,
+        store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .map(|result| result.outcome)
 }
 
 async fn register_project(pool: &sqlx::SqlitePool) {
@@ -87,8 +92,11 @@ async fn edit_rejects_closed_tasks_before_content_changes(pool: sqlx::SqlitePool
     )]);
     let command = content_edit(
         "FOO-0001",
-        EditTaskContent::structured(SetField::Set(title("new title")), TaskLaneEdits::default())
-            .unwrap(),
+        EditTaskContent::structured(
+            SetField::Set(title("new title")),
+            TaskMarkerSectionEdits::default(),
+        )
+        .unwrap(),
     );
 
     let error = run(command, &store, &pool).await.unwrap_err();
@@ -101,7 +109,7 @@ async fn edit_rejects_closed_tasks_before_content_changes(pool: sqlx::SqlitePool
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn prompt_replaces_title_and_every_lane(pool: sqlx::SqlitePool) {
+async fn body_replaces_title_and_every_marker_section(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
     let store = staged(vec![record(
         "FOO-0001",
@@ -124,16 +132,16 @@ async fn prompt_replaces_title_and_every_lane(pool: sqlx::SqlitePool) {
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn prompt_replacement_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) {
+async fn body_replacement_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
     sqlx::query(
-        "UPDATE task_prompt_lanes SET marker = '/o', header = 'Objectives' WHERE lane = 'goals'",
+        "UPDATE task_marker_sections SET marker = '/o', header = 'Objectives' WHERE section = 'goals'",
     )
     .execute(&pool)
     .await
     .unwrap();
     sqlx::query(
-        "UPDATE task_prompt_lanes SET marker = '/v', header = 'Verification' WHERE lane = 'done_when'",
+        "UPDATE task_marker_sections SET marker = '/v', header = 'Verification' WHERE section = 'done_when'",
     )
     .execute(&pool)
     .await
@@ -159,9 +167,9 @@ async fn prompt_replacement_uses_runtime_markers_and_headers(pool: sqlx::SqliteP
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn prompt_replacement_rejects_a_runtime_marker_before_the_title(pool: sqlx::SqlitePool) {
+async fn body_replacement_rejects_a_runtime_marker_before_the_title(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
-    sqlx::query("UPDATE task_prompt_lanes SET marker = '/o' WHERE lane = 'goals'")
+    sqlx::query("UPDATE task_marker_sections SET marker = '/o' WHERE section = 'goals'")
         .execute(&pool)
         .await
         .unwrap();
@@ -182,7 +190,7 @@ async fn prompt_replacement_rejects_a_runtime_marker_before_the_title(pool: sqlx
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn structured_content_replaces_lanes_and_preserves_unrelated_markdown(
+async fn structured_content_replaces_marker_sections_and_preserves_unrelated_markdown(
     pool: sqlx::SqlitePool,
 ) {
     register_project(&pool).await;
@@ -191,7 +199,7 @@ async fn structured_content_replaces_lanes_and_preserves_unrelated_markdown(
         TaskStatus::Active,
         "## Goals\n\n- old\n\n## Notes\n\nkeep me\n\n## Done When\n\n- old outcome",
     )]);
-    let additions = TaskLanes::try_new(
+    let additions = TaskMarkerSections::try_new(
         vec!["new /c literal".to_string()],
         vec!["new context".to_string()],
         Vec::new(),
@@ -202,9 +210,13 @@ async fn structured_content_replaces_lanes_and_preserves_unrelated_markdown(
         "FOO-0001",
         EditTaskContent::structured(
             SetField::NoAction,
-            TaskLaneEdits::new(
+            TaskMarkerSectionEdits::new(
                 additions,
-                [TaskLane::Goal, TaskLane::Context, TaskLane::DoneWhen],
+                [
+                    TaskMarkerSection::Goal,
+                    TaskMarkerSection::Context,
+                    TaskMarkerSection::DoneWhen,
+                ],
             ),
         )
         .unwrap(),
@@ -227,7 +239,7 @@ async fn structured_content_rejects_duplicate_lane_headings(pool: sqlx::SqlitePo
         "FOO-0001",
         EditTaskContent::structured(
             SetField::NoAction,
-            TaskLaneEdits::new(TaskLanes::default(), [TaskLane::Goal]),
+            TaskMarkerSectionEdits::new(TaskMarkerSections::default(), [TaskMarkerSection::Goal]),
         )
         .unwrap(),
     );
@@ -236,7 +248,7 @@ async fn structured_content_rejects_duplicate_lane_headings(pool: sqlx::SqlitePo
 
     assert!(matches!(
         error,
-        EditTaskError::AmbiguousLanes { ref header } if header == "## Goals"
+        EditTaskError::AmbiguousMarkerSections { ref header } if header == "## Goals"
     ));
     assert_eq!(store.tasks("foo-bar")[0].body, body);
 }

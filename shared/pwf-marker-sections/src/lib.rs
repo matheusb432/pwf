@@ -1,15 +1,15 @@
-//! Parses runtime-configured one-line lane syntax and renders it through an [`Adapter`].
+//! Parses runtime-configured one-line section syntax and renders it through an [`Adapter`].
 
 mod adapters;
 mod configuration;
-mod lanes;
+mod marker_sections;
 mod model;
 mod text;
 
 pub use adapters::{Adapter, MarkdownAdapter};
 pub use configuration::{
-    LANE_HEADER_CHARACTER_LIMIT, LaneConfiguration, LaneConfigurationError, LaneDefinition,
-    LaneDefinitionError,
+    MARKER_SECTION_HEADER_CHARACTER_LIMIT, MarkerSectionConfiguration,
+    MarkerSectionConfigurationError, MarkerSectionDefinition, MarkerSectionDefinitionError,
 };
-pub use lanes::{ITEM_MARKER, parse};
-pub use model::ParsedPrompt;
+pub use marker_sections::{ITEM_MARKER, parse};
+pub use model::ParsedMarkerSections;

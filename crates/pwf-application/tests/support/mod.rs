@@ -8,7 +8,7 @@ use pwf_application::ports::{
     project_directory::ProjectDirectoryClient,
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
     task_vault::{
-        NewTask, NullablePatch, TaskDependencyRecord, TaskGraphRecord, TaskGraphSnapshot,
+        NullablePatch, TaskDependencyRecord, TaskGraphRecord, TaskGraphSnapshot, TaskInsertion,
         TaskMutationError, TaskPatch, TaskRevisionState, TaskVault, TaskWrite, TaskWriteSet,
     },
 };
@@ -357,28 +357,20 @@ impl TaskVault for InMemoryStore {
             .unwrap_or_default())
     }
 
-    fn next_task_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
-        let state = self.lock();
-        let project_id = state.project_ids.get(&project.title).cloned().unwrap();
-        let next = state
+    fn highest_task_id(&self, project: &Project) -> Result<Option<TaskId>, Self::Error> {
+        Ok(self
+            .lock()
             .tasks
             .get(&project.title)
             .into_iter()
             .flatten()
-            .map(|task| task.id.number())
-            .max()
-            .unwrap_or(0)
-            + 1;
-        Ok(TaskId::try_new(format!("{project_id}-{next:04}")).unwrap())
+            .map(|task| task.id.clone())
+            .max_by_key(TaskId::number))
     }
 
     /// Materializes an active record at the exact prevalidated task ID.
-    fn insert_task(
-        &self,
-        project: &Project,
-        id: &TaskId,
-        new: NewTask,
-    ) -> Result<TaskRecord, Self::Error> {
+    fn insert_task(&self, insertion: TaskInsertion<'_>) -> Result<(), Self::Error> {
+        let (project, id, new) = insertion.into_parts();
         let mut state = self.lock();
         let revision = next_task_revision(&mut state);
         let tasks = state.tasks.entry(project.title.clone()).or_default();
@@ -407,8 +399,8 @@ impl TaskVault for InMemoryStore {
             locator,
             revision,
         };
-        tasks.push(record.clone());
-        Ok(record)
+        tasks.push(record);
+        Ok(())
     }
 
     fn commit_task_writes(

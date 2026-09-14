@@ -206,18 +206,20 @@ mod tests {
             assert_eq!(stored, enabled);
         }
         assert!(
-            sqlx::query("UPDATE task_prompt_lanes SET marker = 'goal' WHERE lane = 'goals'")
+            sqlx::query("UPDATE task_marker_sections SET marker = 'goal' WHERE section = 'goals'")
                 .execute(&pool)
                 .await
                 .is_err()
         );
         assert!(
-            sqlx::query("UPDATE task_prompt_lanes SET header = 'Context' WHERE lane = 'goals'")
-                .execute(&pool)
-                .await
-                .is_err()
+            sqlx::query(
+                "UPDATE task_marker_sections SET header = 'Context' WHERE section = 'goals'"
+            )
+            .execute(&pool)
+            .await
+            .is_err()
         );
-        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_prompt_lanes")
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_marker_sections")
             .fetch_one(&pool)
             .await
             .unwrap();

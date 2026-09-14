@@ -7,7 +7,11 @@ pub async fn run() {
     let parsed = command::parse_argv(std::env::args().skip(1).collect())
         .unwrap_or_else(|error| error.exit());
     let console = Console::from_terminal();
-    match dispatch(parsed, console).await {
+    let command::Cli {
+        command,
+        mut context,
+    } = parsed;
+    match dispatch(command, console).await {
         Ok((output, success)) => {
             print_output(&output);
             if !success {
@@ -15,8 +19,7 @@ pub async fn run() {
             }
         }
         Err(error) => {
-            eprintln!("Error: {error:#}");
-            std::process::exit(1);
+            error.exit(&mut context);
         }
     }
 }
@@ -27,13 +30,18 @@ fn print_output(output: &str) {
     }
 }
 
-async fn dispatch(parsed: command::Cli, console: Console) -> anyhow::Result<(String, bool)> {
-    let output = match parsed.command {
+async fn dispatch(
+    command: command::RootCommand,
+    console: Console,
+) -> Result<(String, bool), crate::error::Error> {
+    let output = match command {
         command::RootCommand::Doctor(arguments) => {
             let report = crate::doctor::inspect().await;
             return Ok((arguments.render(&report, console)?, !report.failed()));
         }
-        command::RootCommand::Server(arguments) => crate::server::run(arguments, console).await,
+        command::RootCommand::Server(arguments) => crate::server::run(arguments, console)
+            .await
+            .map_err(Into::into),
         command::RootCommand::Project(arguments) if arguments.command.is_none() => {
             Ok(command::project_help())
         }
@@ -57,7 +65,9 @@ async fn dispatch(parsed: command::Cli, console: Console) -> anyhow::Result<(Str
             } else {
                 ProjectStatusColors::default()
             };
-            project::run(arguments, console, colors, &project_client).await
+            project::run(arguments, console, colors, &project_client)
+                .await
+                .map_err(Into::into)
         }
         command::RootCommand::Task(command) => {
             let client = connect().await?;

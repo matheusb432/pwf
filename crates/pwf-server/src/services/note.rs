@@ -49,7 +49,7 @@ impl NoteService for NoteGrpcService {
         add_note::execute(
             command,
             &self.state.store,
-            &self.state.pool,
+            &self.state.projects,
             &self.state.clock,
         )
         .await
@@ -63,7 +63,7 @@ impl NoteService for NoteGrpcService {
         request: Request<pb::ListNotesRequest>,
     ) -> Result<Response<pb::ListNotesResponse>, Status> {
         let query = proto::note::list_notes_request(request.into_inner())?;
-        list_notes::execute(query, &self.state.store, &self.state.pool)
+        list_notes::execute(query, &self.state.store, &self.state.projects)
             .await
             .map(proto::note::list_notes_response)
             .map(Response::new)
@@ -75,7 +75,7 @@ impl NoteService for NoteGrpcService {
         request: Request<pb::UpdateNoteRequest>,
     ) -> Result<Response<pb::UpdateNoteResponse>, Status> {
         let command = proto::note::update_note_request(request.into_inner())?;
-        edit_note::execute(command, &self.state.store, &self.state.pool)
+        edit_note::execute(command, &self.state.store, &self.state.projects)
             .await
             .map(|note| proto::note::update_note_response(&note))
             .map(Response::new)
@@ -109,13 +109,14 @@ impl NoteService for NoteGrpcService {
         );
         let state = self.state.clone();
         tokio::spawn(async move {
-            let item = remove_note::execute(command, &state.store, &state.pool, &mut confirmation)
-                .await
-                .map(proto::note::delete_note_result)
-                .map(|result| pb::DeleteNoteResponse {
-                    value: Some(pb::delete_note_response::Value::Result(result)),
-                })
-                .map_err(remove_note_status);
+            let item =
+                remove_note::execute(command, &state.store, &state.projects, &mut confirmation)
+                    .await
+                    .map(proto::note::delete_note_result)
+                    .map(|result| pb::DeleteNoteResponse {
+                        value: Some(pb::delete_note_response::Value::Result(result)),
+                    })
+                    .map_err(remove_note_status);
             let _ = outbound.send(item).await;
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))

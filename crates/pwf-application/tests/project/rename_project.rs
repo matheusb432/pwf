@@ -101,7 +101,7 @@ async fn rename_replaces_identity_and_preserves_project_state(pool: sqlx::Sqlite
                 "/project-notes/self/renamed-app",
             ),
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &TaskFilesClient::Available,
         &home(),
     )
@@ -145,7 +145,7 @@ async fn task_file_staging_failure_leaves_registry_unchanged(pool: sqlx::SqliteP
                 "/project-notes/self/renamed-app",
             ),
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &TaskFilesClient::Missing,
         &home(),
     )
@@ -174,7 +174,7 @@ async fn missing_source_project_is_classified(pool: sqlx::SqlitePool) {
                 "/project-notes/self/renamed-app",
             ),
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &TaskFilesClient::Available,
         &home(),
     )
@@ -220,7 +220,7 @@ async fn destination_id_conflict_leaves_source_unchanged(pool: sqlx::SqlitePool)
                 "/project-notes/self/renamed-app",
             ),
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &TaskFilesClient::Available,
         &home(),
     )
@@ -279,7 +279,7 @@ async fn destination_title_conflict_is_classified(pool: sqlx::SqlitePool) {
                 "/project-notes/self/renamed-app",
             ),
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &TaskFilesClient::Available,
         &home(),
     )
@@ -325,7 +325,7 @@ async fn runtime_task_collision_leaves_source_unchanged(pool: sqlx::SqlitePool) 
                 "/home/tester/tasks/shared",
             ),
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &TaskFilesClient::Available,
         &home(),
     )
@@ -371,7 +371,7 @@ async fn invalid_task_path_is_classified(pool: sqlx::SqlitePool) {
                 "~/tasks/../renamed-app",
             ),
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &TaskFilesClient::Available,
         &home(),
     )

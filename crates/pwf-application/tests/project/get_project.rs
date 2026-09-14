@@ -14,7 +14,7 @@ async fn status_filter_controls_paused_project_visibility(pool: sqlx::SqlitePool
             id: id.clone(),
             status: ProjectStatusFilter::ActiveOnly,
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await;
     let all = get_project::execute(
@@ -22,7 +22,7 @@ async fn status_filter_controls_paused_project_visibility(pool: sqlx::SqlitePool
             id,
             status: ProjectStatusFilter::IncludingPaused,
         },
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();

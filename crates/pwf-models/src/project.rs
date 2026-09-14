@@ -1,7 +1,6 @@
 use std::{
     fmt,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use nutype::nutype;
@@ -74,57 +73,6 @@ impl From<&ProjectId> for ProjectId {
         id.clone()
     }
 }
-
-/// Selects a managed project by its configured name or ID.
-///
-/// The original spelling is retained for name lookup and diagnostics. When the
-/// value is also a valid project ID, resolution can fall back to that ID after
-/// checking for a case-insensitive name match.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProjectSelector {
-    value: String,
-    project_id: Option<ProjectId>,
-}
-
-impl ProjectSelector {
-    /// Returns the project ID candidate, when the selector has ID syntax.
-    #[must_use]
-    pub fn project_id(&self) -> Option<&ProjectId> {
-        self.project_id.as_ref()
-    }
-}
-
-impl AsRef<str> for ProjectSelector {
-    fn as_ref(&self) -> &str {
-        &self.value
-    }
-}
-
-impl fmt::Display for ProjectSelector {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.value)
-    }
-}
-
-impl FromStr for ProjectSelector {
-    type Err = ProjectSelectorError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        let value = raw.trim();
-        if value.is_empty() {
-            return Err(ProjectSelectorError);
-        }
-        Ok(Self {
-            value: value.to_string(),
-            project_id: ProjectId::try_new(value).ok(),
-        })
-    }
-}
-
-/// Reports an empty managed-project selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("project selector cannot be blank")]
-pub struct ProjectSelectorError;
 
 /// Pairs a project's ID and title for renaming its files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -395,26 +343,6 @@ mod tests {
         for raw in ["P", "TOOLS", "P1", "P_E"] {
             assert!(raw.parse::<ProjectId>().is_err(), "accepted {raw:?}");
         }
-    }
-
-    #[test]
-    fn project_selector_retains_names_and_exposes_id_candidates() {
-        let name = " companion-project ".parse::<ProjectSelector>().unwrap();
-        assert_eq!(name.as_ref(), "companion-project");
-        assert_eq!(name.project_id(), None);
-
-        let id = " foo ".parse::<ProjectSelector>().unwrap();
-        assert_eq!(id.as_ref(), "foo");
-        assert_eq!(id.project_id().map(AsRef::as_ref), Some("FOO"));
-        assert_eq!(
-            " tool "
-                .parse::<ProjectSelector>()
-                .unwrap()
-                .project_id()
-                .map(AsRef::as_ref),
-            Some("TOOL")
-        );
-        assert!(" \t ".parse::<ProjectSelector>().is_err());
     }
 
     #[test]

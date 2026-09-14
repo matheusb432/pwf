@@ -49,9 +49,14 @@ async fn done_changes_only_the_target_without_listing_other_notes(pool: sqlx::Sq
     tasks.push(record("FOO-0008", TaskStatus::Active));
     let store = staged(tasks).with_failure(InMemoryStoreFailure::ListTasks);
 
-    let result = complete_task::execute(&done_command("FOO-0008"), &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    let result = complete_task::execute(
+        &done_command("FOO-0008"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap();
 
     let tasks = store.tasks("foo-bar");
     assert_eq!(tasks.len(), 8);
@@ -76,9 +81,14 @@ async fn done_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
     )
     .await;
     let store = staged(vec![record("FOO-0001", TaskStatus::Active)]);
-    complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    complete_task::execute(
+        &done_command("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         store.tasks("foo-bar")[0].completed_at,
@@ -103,9 +113,14 @@ async fn done_rejects_a_stale_note_revision_without_mutating(pool: sqlx::SqliteP
     store.externally_edit_task(&crate::support::project("FOO", "foo-bar"), &command.id);
     let before = store.tasks("foo-bar");
 
-    let error = complete_task::execute(&command, &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = complete_task::execute(
+        &command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(
         error,
@@ -127,9 +142,14 @@ async fn done_on_missing_item_reports_item_not_found(pool: sqlx::SqlitePool) {
     .await;
     let store = staged(Vec::new());
 
-    let error = complete_task::execute(&done_command("FOO-9999"), &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = complete_task::execute(
+        &done_command("FOO-9999"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(
         error,
@@ -156,9 +176,14 @@ async fn done_does_not_validate_an_unreturned_persisted_title(pool: sqlx::Sqlite
     };
     let store = staged(vec![invalid]);
 
-    complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    complete_task::execute(
+        &done_command("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
 }
@@ -176,9 +201,14 @@ async fn done_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
     .await;
     let store = staged(Vec::new());
 
-    let error = complete_task::execute(&done_command("XYZ-0001"), &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = complete_task::execute(
+        &done_command("XYZ-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(
         error.to_string(),

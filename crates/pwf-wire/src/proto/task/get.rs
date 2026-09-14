@@ -3,8 +3,8 @@ use std::{error::Error, str::FromStr};
 use pwf_models::{
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, Task, TaskId, TaskPrompt,
-        TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, Task, TaskBody, TaskId, TaskStatus,
+        TaskTags, TaskTimestamp, TaskTitle,
     },
 };
 
@@ -25,7 +25,7 @@ impl From<Task> for pb::Task {
             id: task.id.into_string(),
             title: task.title.into_inner(),
             status: task_status_value(task.status),
-            prompt: task.prompt.into_string(),
+            body: task.body.into_string(),
             created_at: task.created_at.as_ref().map(ToString::to_string),
             completed_at: task.completed_at.as_ref().map(ToString::to_string),
             commits: task.commits.map(CommitRanges::into_inner),
@@ -139,7 +139,7 @@ impl TryFrom<pb::Task> for Task {
             id,
             title,
             status,
-            prompt: TaskPrompt::new(value.prompt),
+            body: TaskBody::new(value.body),
             created_at: value
                 .created_at
                 .as_deref()
@@ -191,7 +191,7 @@ mod tests {
                 id: "FOO-0001".to_string(),
                 title: "parsed task".to_string(),
                 status: pb::TaskStatus::Done as i32,
-                prompt: "\n  authored body  \n".to_string(),
+                body: "\n  authored body  \n".to_string(),
                 created_at: Some("2026-07-26T09:34:56-03:00".to_string()),
                 completed_at: Some("2026-08-12T09:34:56-03:00".to_string()),
                 commits: Some("a..b, c..d".to_string()),
@@ -211,7 +211,7 @@ mod tests {
         let pointers = [
             wire.id.as_ptr(),
             wire.title.as_ptr(),
-            wire.prompt.as_ptr(),
+            wire.body.as_ptr(),
             wire.commits.as_ref().unwrap().as_ptr(),
             wire.tags[0].as_ptr(),
             wire.blocked_by[0].as_ptr(),
@@ -225,7 +225,7 @@ mod tests {
             [
                 wire.id.as_ptr(),
                 wire.title.as_ptr(),
-                wire.prompt.as_ptr(),
+                wire.body.as_ptr(),
                 wire.commits.as_ref().unwrap().as_ptr(),
                 wire.tags[0].as_ptr(),
                 wire.blocked_by[0].as_ptr(),
@@ -282,13 +282,13 @@ mod tests {
     }
 
     #[test]
-    fn get_task_decoding_preserves_absence_and_placeholder_prompts() {
+    fn get_task_decoding_preserves_absence_and_placeholder_bodies() {
         let response = pb::GetTaskResponse {
             task: Some(pb::Task {
                 id: "FOO-0001".to_string(),
                 title: "placeholder".to_string(),
                 status: pb::TaskStatus::Active as i32,
-                prompt: "TODO".to_string(),
+                body: "TODO".to_string(),
                 revision: "a".repeat(64),
                 ..Default::default()
             }),

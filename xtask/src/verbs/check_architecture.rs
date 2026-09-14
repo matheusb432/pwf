@@ -48,7 +48,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-server",
             "xtask",
         ],
-        reason: "wire contracts must not depend on prompt syntax, use cases, adapters, or process roots",
+        reason: "wire contracts must not depend on task-body syntax, use cases, adapters, or process roots",
     },
     EdgePolicy {
         from: "pwf-application",
@@ -108,7 +108,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-wire",
             "sqlx",
         ],
-        reason: "the CLI must not own prompt syntax, application policy, or persistence",
+        reason: "the CLI must not own task-body syntax, application policy, or persistence",
     },
     EdgePolicy {
         from: "pwf-local-transport",
@@ -290,9 +290,9 @@ mod tests {
                  pwf-application -> pwf-infra: infrastructure belongs behind application-owned \
                  boundaries",
                 "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> pwf-application: the CLI \
-                 must not own prompt syntax, application policy, or persistence",
+                 must not own task-body syntax, application policy, or persistence",
                 "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> pwf-marker-sections: the CLI must \
-                 not own prompt syntax, application policy, or persistence",
+                 not own task-body syntax, application policy, or persistence",
                 "pwf-client/Cargo.toml: [client stays transport-only] pwf-client -> pwf-infra: the \
                  client may own transport mechanics but no application policy or persistence",
                 "pwf-client/Cargo.toml: [client stays transport-only] pwf-client -> sqlx: the client \
@@ -302,9 +302,9 @@ mod tests {
                 "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
                 "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> pwf-infra: wire \
-                 contracts must not depend on prompt syntax, use cases, adapters, or process roots",
+                 contracts must not depend on task-body syntax, use cases, adapters, or process roots",
                 "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> \
-                 pwf-marker-sections: wire contracts must not depend on prompt syntax, use cases, adapters, \
+                 pwf-marker-sections: wire contracts must not depend on task-body syntax, use cases, adapters, \
                  or process roots",
             ]
         );

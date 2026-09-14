@@ -16,9 +16,15 @@ async fn get_task_returns_parsed_values_without_changing_the_body(pool: sqlx::Sq
     record.commits = Some("'a..b, a..b, c..d'".to_string());
     record.created_at = Some("2026-07-26T12:34:56Z".parse().unwrap());
     let store = InMemoryStore::default().with_project("foo", vec![record.clone()]);
-    let task = get_task::execute(&record.id, &store, &pool).await.unwrap();
+    let task = get_task::execute(
+        &record.id,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
     assert_eq!(task.title.as_ref(), "Typed task");
-    assert_eq!(task.prompt.as_ref(), record.body);
+    assert_eq!(task.body.as_ref(), record.body);
     assert_eq!(
         task.tags.as_ref(),
         Some(&TaskTags::parse_frontmatter("[rust, sqlite]").unwrap())
@@ -58,15 +64,23 @@ async fn get_task_rejects_malformed_metadata_while_raw_lookup_preserves_it(pool:
         }
         let store = InMemoryStore::default().with_project("foo", vec![record.clone()]);
         assert_eq!(
-            get_task_record::execute(&record.id, &store, &pool)
-                .await
-                .unwrap(),
+            get_task_record::execute(
+                &record.id,
+                &store,
+                &pwf_infra::project_store::SqliteProjectStore::new(pool.clone())
+            )
+            .await
+            .unwrap(),
             record
         );
-        let error = get_task::execute(&record.id, &store, &pool)
-            .await
-            .unwrap_err()
-            .to_string();
+        let error = get_task::execute(
+            &record.id,
+            &store,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(error.contains(field), "{error}");
         assert!(
             error.contains(record.locator.to_string().as_str()),

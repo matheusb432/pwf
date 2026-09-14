@@ -6,7 +6,6 @@ service ProjectService {
   rpc AddVaultProject(AddVaultProjectRequest) returns (AddVaultProjectResponse);
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
-  rpc ResolveProject(ResolveProjectRequest) returns (ResolveProjectResponse);
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc PauseProject(PauseProjectRequest) returns (PauseProjectResponse);
   rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
@@ -163,13 +162,6 @@ message GetProjectResponse {
 }
 
 // Resolves an exact case-insensitive title before trying the normalized project ID.
-message ResolveProjectRequest {
-  string selector = 1;
-  ProjectStatusFilter status = 2;
-}
-
-message ResolveProjectResponse { string id = 1; }
-
 message ListProjectsRequest { ProjectStatusFilter status = 1; }
 message ListProjectsResponse { repeated Project projects = 1; }
 message PauseProjectRequest { string id = 1; }
@@ -315,24 +307,24 @@ message DeleteNoteResponse {
   }
 }
 
-enum TaskLane {
-  TASK_LANE_UNSPECIFIED = 0;
-  TASK_LANE_GOAL = 1;
-  TASK_LANE_CONTEXT = 2;
-  TASK_LANE_CONSTRAINT = 3;
-  TASK_LANE_DONE_WHEN = 4;
+enum TaskMarkerSection {
+  TASK_MARKER_SECTION_UNSPECIFIED = 0;
+  TASK_MARKER_SECTION_GOAL = 1;
+  TASK_MARKER_SECTION_CONTEXT = 2;
+  TASK_MARKER_SECTION_CONSTRAINT = 3;
+  TASK_MARKER_SECTION_DONE_WHEN = 4;
 }
 
-message TaskLanes {
+message TaskMarkerSections {
   repeated string goals = 1;
   repeated string context = 2;
   repeated string constraints = 3;
   repeated string done_when = 4;
 }
 
-message StructuredTaskPrompt {
+message StructuredTaskBody {
   string title = 1;
-  TaskLanes lanes = 2;
+  TaskMarkerSections sections = 2;
 }
 
 enum EffortTier {
@@ -355,9 +347,9 @@ message CreateTaskRequest {
   reserved 4;
   reserved "index_section";
   string project_id = 1;
-  oneof prompt {
+  oneof body {
     string shorthand = 2;
-    StructuredTaskPrompt structured = 3;
+    StructuredTaskBody structured = 3;
   }
   repeated string blocked_by = 5;
   optional EffortTier effort = 6;
@@ -431,20 +423,20 @@ message PriorityEdit {
 message StructuredTaskEdit {
   // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
   optional string title = 1;
-  TaskLanes additions = 2;
-  repeated TaskLane removals = 3;
+  TaskMarkerSections additions = 2;
+  repeated TaskMarkerSection removals = 3;
 }
 
-message AppendTaskPrompt {
+message AppendTaskBody {
   // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
   optional string title = 1;
-  string prompt = 2;
+  string body = 2;
 }
 
 message TaskContentEdit {
   oneof content {
     StructuredTaskEdit structured = 1;
-    AppendTaskPrompt append = 2;
+    AppendTaskBody append = 2;
     string replace = 3;
   }
 }
@@ -633,7 +625,7 @@ message Task {
   string id = 1;
   string title = 2;
   TaskStatus status = 3;
-  string prompt = 4;
+  string body = 4;
   optional string created_at = 5;
   optional string completed_at = 6;
   optional string commits = 7;
@@ -701,7 +693,7 @@ enum TaskIssueKind {
   TASK_ISSUE_KIND_UNSPECIFIED = 0;
   reserved 1;
   reserved "TASK_ISSUE_KIND_MISSING_NOTE";
-  TASK_ISSUE_KIND_PLACEHOLDER_PROMPT = 2;
+  TASK_ISSUE_KIND_PLACEHOLDER_BODY = 2;
 }
 
 message TaskIssue {
@@ -715,7 +707,7 @@ message ListedTask {
   string project = 2;
   TaskStatus status = 3;
   string heading = 4;
-  string prompt = 5;
+  string body = 5;
   optional string project_path = 6;
   reserved 7;
   reserved "location";

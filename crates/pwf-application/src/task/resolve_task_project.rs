@@ -3,7 +3,10 @@ use pwf_models::{
     task::TaskId,
 };
 
-use crate::project::{get_active_project, get_project::GetProjectError};
+use crate::{
+    ports::project_store::ProjectStore,
+    project::{get_active_project, get_project::GetProjectError},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveTaskProjectError {
@@ -19,9 +22,9 @@ pub enum ResolveTaskProjectError {
 #[cqrsy::query]
 pub async fn execute(
     id: TaskId,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<Project, ResolveTaskProjectError> {
-    let project = get_active_project::execute(id.project_id().clone(), pool)
+    let project = get_active_project::execute(id.project_id().clone(), project_store)
         .await
         .map_err(|error| match error {
             GetProjectError::ProjectNotFound { id: project_id } => {

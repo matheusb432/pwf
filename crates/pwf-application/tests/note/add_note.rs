@@ -37,9 +37,14 @@ async fn maximum_suffix_allocates_the_next_identifier(pool: sqlx::SqlitePool) {
             ],
         );
 
-        let added = add_note::execute(command(project_id), &store, &pool, &FixedClock)
-            .await
-            .unwrap();
+        let added = add_note::execute(
+            command(project_id),
+            &store,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+            &FixedClock,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(added.id.as_ref(), "FOO-NOTE-0010");
         assert_eq!(added.title.as_ref(), "remember milk");
@@ -55,9 +60,14 @@ async fn explicit_date_overrides_the_clock(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = InMemoryStore::default();
 
-    add_note::execute(command("foo"), &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    add_note::execute(
+        command("foo"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         store.project_note_creations("foo"),
@@ -72,9 +82,14 @@ async fn absent_date_uses_the_clock_once(pool: sqlx::SqlitePool) {
     let mut command = command("foo");
     command.date = None;
 
-    add_note::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
+    add_note::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         store.project_note_creations("foo"),
@@ -88,9 +103,14 @@ async fn exhausted_four_digit_suffix_is_reported_without_inserting(pool: sqlx::S
     let store =
         InMemoryStore::default().with_project_notes("foo", vec![project_note(9_999, "last")]);
 
-    let error = add_note::execute(command("foo"), &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = add_note::execute(
+        command("foo"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(
         error,

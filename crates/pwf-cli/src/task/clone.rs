@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_client::{pb::CloneTaskRequest, project::ProjectClient, task::TaskClient};
-use pwf_models::{project::ProjectSelector, settings::TaskStatusColors};
+use pwf_models::{project::ProjectId, settings::TaskStatusColors};
 
 use super::{
     Identifier,
@@ -12,9 +12,9 @@ use crate::console::Console;
 pub struct Arguments {
     #[command(flatten)]
     identifier: Identifier,
-    /// Destination project name or ID; defaults to the source task's project.
-    #[arg(long, value_name = "PROJECT")]
-    project: Option<ProjectSelector>,
+    /// Destination project ID; defaults to the source task's project.
+    #[arg(long, value_name = "PROJECT", value_parser = crate::project::parse_project_id)]
+    project: Option<ProjectId>,
 }
 
 pub(super) async fn run(
@@ -23,11 +23,11 @@ pub(super) async fn run(
     colors: TaskStatusColors,
     client: &TaskClient,
     projects: &ProjectClient,
-) -> anyhow::Result<String> {
+) -> Result<String, crate::error::Error> {
     let id = arguments.identifier.id();
     let project_id = match arguments.project.as_ref() {
-        Some(selector) => Some(
-            crate::project::resolve_project_id(selector, projects)
+        Some(id) => Some(
+            crate::project::resolve_project_id(id, projects)
                 .await?
                 .into_inner(),
         ),
@@ -38,8 +38,7 @@ pub(super) async fn run(
             id: id.to_string(),
             project_id,
         })
-        .await
-        .map_err(crate::rpc_error)?;
+        .await?;
     render_mutation(
         TaskMutationAction::Cloned,
         &result.id,
@@ -47,4 +46,5 @@ pub(super) async fn run(
         colors,
         console.color(),
     )
+    .map_err(Into::into)
 }

@@ -72,9 +72,6 @@ fn measure_update(size: DocumentSize) -> AllocationInfo {
 fn measure_insert(size: DocumentSize) -> AllocationInfo {
     let mut workload = InsertWorkload::new(size);
     measure(|| {
-        drop(black_box(require(
-            workload.insert(),
-            "inserting allocation fixture",
-        )));
+        require(workload.insert(), "inserting allocation fixture");
     })
 }

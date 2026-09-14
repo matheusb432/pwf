@@ -11,7 +11,11 @@ use sqlx::SqlitePool;
 /// Cloneable composition shared by stateless gRPC service adapters.
 #[derive(Clone)]
 pub struct AppState {
+    #[cfg(test)]
     pub(crate) pool: SqlitePool,
+    pub(crate) projects: pwf_infra::project_store::SqliteProjectStore,
+    pub(crate) task_marker_sections:
+        pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore,
     pub(crate) home: HomeDirectory,
     pub(crate) store: ObsidianStore,
     pub(crate) clock: LocalClock,
@@ -41,7 +45,11 @@ impl AppState {
     pub fn new(pool: SqlitePool, home: HomeDirectory, user_settings: TomlSettingsStore) -> Self {
         Self {
             store: ObsidianStore::with_watched_tasks(home.clone()),
-            pool,
+            #[cfg(test)]
+            pool: pool.clone(),
+            projects: pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+            task_marker_sections:
+                pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool),
             home,
             clock: LocalClock,
             project_directory: LocalProjectDirectoryClient,

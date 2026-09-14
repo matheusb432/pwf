@@ -46,7 +46,7 @@ pub(crate) fn resolve(arguments: &Arguments) -> ResolvedCommand {
 
 fn list_arguments(
     arguments: &Arguments,
-    project: Option<pwf_models::project::ProjectSelector>,
+    project: Option<pwf_models::project::ProjectId>,
 ) -> list::Arguments {
     list::Arguments {
         project,
@@ -86,7 +86,7 @@ mod tests {
         assert!(list.is_some());
         let list = list.unwrap();
 
-        assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("foo"));
+        assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("FOO"));
         assert_eq!(
             list.options.long,
             Some(crate::task::ContentSelection::Automatic)

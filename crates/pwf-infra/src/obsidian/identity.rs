@@ -18,7 +18,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-pub(super) fn task_directory_scan_count() -> usize {
+pub(crate) fn task_directory_scan_count() -> usize {
     TASK_DIRECTORY_SCAN_COUNT.get()
 }
 

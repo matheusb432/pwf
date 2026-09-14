@@ -117,9 +117,14 @@ async fn activate_clears_the_note_completion_metadata(pool: sqlx::SqlitePool) {
     let store = staged(TaskStatus::Done);
     let mut confirmation = TestConfirmation::accepting();
 
-    let out = activate_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
-        .await
-        .unwrap();
+    let out = activate_task::execute(
+        &command("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut confirmation,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(out.outcome, ActivateTaskOutcome::Activated);
     let confirmations = confirmation.recorded();
@@ -159,9 +164,14 @@ async fn activate_rejects_a_task_edited_after_preflight_without_mutation(pool: s
         id: TaskId::try_new("FOO-0001").unwrap(),
     };
 
-    let error = activate_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
-        .await
-        .unwrap_err();
+    let error = activate_task::execute(
+        &command("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut confirmation,
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(
         error,
@@ -189,9 +199,14 @@ async fn activate_accepts_a_cancelled_task_file(pool: sqlx::SqlitePool) {
     let store = staged(TaskStatus::Cancelled);
     let mut confirmation = TestConfirmation::accepting();
 
-    let out = activate_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
-        .await
-        .unwrap();
+    let out = activate_task::execute(
+        &command("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut confirmation,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(out.outcome, ActivateTaskOutcome::Activated);
     assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
@@ -211,9 +226,14 @@ async fn activate_already_active_is_idempotent_skip(pool: sqlx::SqlitePool) {
     let store = staged(TaskStatus::Active);
     let mut confirmation = TestConfirmation::accepting();
 
-    let out = activate_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
-        .await
-        .unwrap();
+    let out = activate_task::execute(
+        &command("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut confirmation,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(out.outcome, ActivateTaskOutcome::AlreadyActive);
     assert!(confirmation.recorded().is_empty());
@@ -235,9 +255,14 @@ async fn declined_activate_preserves_every_completion_artifact(pool: sqlx::Sqlit
     let tasks_before = store.tasks("foo-bar");
     let mut confirmation = TestConfirmation::declining();
 
-    let outcome = activate_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
-        .await
-        .unwrap();
+    let outcome = activate_task::execute(
+        &command("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut confirmation,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome.outcome, ActivateTaskOutcome::Aborted);
     assert!(outcome.task.is_none());
@@ -258,9 +283,14 @@ async fn activate_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
     let store = staged(TaskStatus::Done);
     let mut confirmation = TestConfirmation::accepting();
 
-    let error = activate_task::execute(&command("XYZ-0001"), &store, &pool, &mut confirmation)
-        .await
-        .unwrap_err();
+    let error = activate_task::execute(
+        &command("XYZ-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut confirmation,
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(error.to_string(), "Task not found: XYZ-0001");
 }
@@ -284,9 +314,14 @@ async fn activate_backlog_preserves_content_without_confirmation(pool: sqlx::Sql
     let store = InMemoryStore::default().with_project("foo-bar", vec![backlogged.clone()]);
     let mut confirmation = TestConfirmation::declining();
 
-    let result = activate_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
-        .await
-        .unwrap();
+    let result = activate_task::execute(
+        &command("FOO-0001"),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &mut confirmation,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.outcome, ActivateTaskOutcome::Activated);
     assert!(confirmation.recorded().is_empty());

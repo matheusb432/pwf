@@ -24,7 +24,7 @@ pub enum TaskLocationError {
     },
 }
 
-pub(in crate::project) fn reject_collision(
+pub fn reject_collision(
     candidate_id: &ProjectId,
     candidate_path: &ProjectTasksPath,
     existing: impl IntoIterator<Item = (ProjectId, ProjectTasksPath)>,

@@ -152,9 +152,16 @@ impl InsertWorkload {
         }
     }
 
-    pub fn insert(&mut self) -> Result<TaskRecord, ObsidianStoreError> {
+    pub fn insert(&mut self) -> Result<(), ObsidianStoreError> {
         let new_task = require_some(self.new_task.take(), "taking the one-use benchmark task");
-        TaskVault::insert_task(&self.store, &self.project, &self.id, new_task)
+        TaskVault::insert_task(
+            &self.store,
+            pwf_application::ports::task_vault::TaskInsertion::new(
+                &self.project,
+                &self.id,
+                new_task,
+            ),
+        )
     }
 }
 
@@ -183,7 +190,14 @@ pub fn validate() {
     assert_eq!(records.len(), manifest().list_task_count);
 
     let mut insert = InsertWorkload::new(DocumentSize::Small);
-    let record = require(insert.insert(), "inserting benchmark task");
+    require(insert.insert(), "inserting benchmark task");
+    let record = require_some(
+        require(
+            TaskVault::get_task_record(&insert.store, &insert.project, &insert.id),
+            "reading inserted benchmark task",
+        ),
+        "finding inserted benchmark task",
+    );
     assert_eq!(record.id.as_ref(), "PWF-0001");
     assert_eq!(record.title, "inserted benchmark task");
 }

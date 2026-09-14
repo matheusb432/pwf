@@ -13,18 +13,22 @@ use pwf_wire::{
 };
 
 use super::{
-    TaskPromptTitleError,
+    TaskBodyTitleError,
     blocked_by::{self, BlockedByValidationError},
     commit_task_writes,
-    content::{EditLanesError, append_lanes, edit_lanes, render},
+    content::{EditMarkerSectionsError, append_marker_sections, edit_marker_sections, render},
     ensure_task_revision, expected_task_revision, infer_task_title,
-    lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
+    marker_sections::{TaskMarkerSections, TaskMarkerSectionsError},
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
     resolve_task_project::{self, ResolveTaskProjectError},
     task_body_region,
 };
-use crate::ports::task_vault::{
-    ExpectedTaskRevision, NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite,
+use crate::ports::{
+    project_store::ProjectStore,
+    task_marker_section_store::TaskMarkerSectionStore,
+    task_vault::{
+        ExpectedTaskRevision, NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite,
+    },
 };
 
 struct PreparedTaskEdit {
@@ -49,9 +53,9 @@ pub enum EditTaskError {
     #[error(transparent)]
     Revision(#[from] super::TaskRevisionConflict),
     #[error(transparent)]
-    InvalidTitle(#[from] TaskPromptTitleError),
+    InvalidTitle(#[from] TaskBodyTitleError),
     #[error(transparent)]
-    PromptLanes(#[from] TaskPromptLanesError),
+    MarkerSections(#[from] TaskMarkerSectionsError),
     #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
     InvalidTagsFrontmatter { id: TaskId, raw: String },
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
@@ -76,8 +80,8 @@ pub enum EditTaskError {
     SelfBlockedBy { target: TaskId, blocker: TaskId },
     #[error("blocked_by cycle: {}", blocked_by::format_task_ids_path(path))]
     BlockedByCycle { path: Vec<TaskId> },
-    #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
-    AmbiguousLanes { header: String },
+    #[error("cannot edit sections: task body contains more than one `{header}` section.")]
+    AmbiguousMarkerSections { header: String },
     #[error(transparent)]
     WriteStore(anyhow::Error),
     #[error(transparent)]
@@ -91,9 +95,10 @@ pub enum EditTaskError {
 pub async fn execute(
     command: EditTask,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
+    marker_section_store: &impl TaskMarkerSectionStore,
 ) -> Result<TaskMutationResult<()>, EditTaskError> {
-    let project = resolve_task_project::execute(command.id.clone(), pool)
+    let project = resolve_task_project::execute(command.id.clone(), project_store)
         .await
         .map_err(|error| map_project_error(error, &command.id))?;
     let record = store
@@ -118,7 +123,7 @@ pub async fn execute(
                 blockers,
             },
             store,
-            pool,
+            project_store,
         )
         .await
         .map_err(|error| match error {
@@ -132,8 +137,8 @@ pub async fn execute(
     }
     let content_patch = match command.edits.content() {
         SetField::Set(content) => {
-            let lane_configuration = TaskPromptLanes::load(pool).await?;
-            prepare_content(content, &record, &lane_configuration)?
+            let marker_sections = marker_section_store.get_task_marker_sections().await?;
+            prepare_content(content, &record, &marker_sections)?
         }
         SetField::NoAction => (SetField::NoAction, SetField::NoAction),
     };
@@ -190,24 +195,24 @@ fn prepare(
 fn prepare_content(
     content: &EditTaskContent,
     record: &TaskRecord,
-    lane_configuration: &TaskPromptLanes,
+    marker_sections: &TaskMarkerSections,
 ) -> Result<(SetField<String>, SetField<TaskTitle>), EditTaskError> {
     let current_body = task_body_region(&record.body);
     match content.kind() {
-        EditTaskContentKind::Structured { title, lanes } => Ok((
-            edit_lanes(current_body, lanes, lane_configuration)
-                .map_err(map_lane_error)?
+        EditTaskContentKind::Structured { title, sections } => Ok((
+            edit_marker_sections(current_body, sections, marker_sections)
+                .map_err(map_marker_section_error)?
                 .into(),
             title.clone(),
         )),
-        EditTaskContentKind::AppendShorthand { title, prompt } => Ok((
-            SetField::Set(append_lanes(current_body, prompt, lane_configuration)),
+        EditTaskContentKind::AppendShorthand { title, body } => Ok((
+            SetField::Set(append_marker_sections(current_body, body, marker_sections)),
             title.clone(),
         )),
-        EditTaskContentKind::ReplaceShorthand { prompt } => {
-            let title = infer_task_title(prompt, lane_configuration)?;
+        EditTaskContentKind::ReplaceShorthand { body } => {
+            let title = infer_task_title(body, marker_sections)?;
             Ok((
-                SetField::Set(render(prompt, lane_configuration)),
+                SetField::Set(render(body, marker_sections)),
                 SetField::Set(title),
             ))
         }
@@ -316,8 +321,10 @@ fn persist(prepared: PreparedTaskEdit, store: &impl TaskVault) -> Result<(), Edi
     .map_err(Into::into)
 }
 
-fn map_lane_error(error: EditLanesError) -> EditTaskError {
+fn map_marker_section_error(error: EditMarkerSectionsError) -> EditTaskError {
     match error {
-        EditLanesError::DuplicateSection { header } => EditTaskError::AmbiguousLanes { header },
+        EditMarkerSectionsError::DuplicateSection { header } => {
+            EditTaskError::AmbiguousMarkerSections { header }
+        }
     }
 }

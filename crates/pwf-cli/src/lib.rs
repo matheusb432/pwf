@@ -3,6 +3,7 @@
 pub mod command;
 pub mod doctor;
 mod entrypoint;
+pub mod error;
 pub use entrypoint::run;
 mod confirmation;
 pub mod console;
@@ -17,10 +18,4 @@ pub mod task;
 #[path = "../tests/support/style.rs"]
 mod test_style;
 
-pub(crate) fn rpc_error(error: pwf_client::ClientError) -> anyhow::Error {
-    match error {
-        pwf_client::ClientError::Rpc(status) => anyhow::anyhow!(status.message().to_string()),
-        pwf_client::ClientError::InvalidTaskResponse(error) => anyhow::Error::new(error),
-        pwf_client::ClientError::InvalidTaskDagResponse(error) => anyhow::Error::new(error),
-    }
-}
+pub(crate) use error::rpc_error;

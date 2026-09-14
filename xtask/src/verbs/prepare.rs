@@ -29,7 +29,7 @@ fn exec(root: &Path, check: bool) -> Result<()> {
         DATABASE_SETUP_DEADLINE,
     )?;
     run_sqlx(
-        &root.join("crates/pwf-application"),
+        &root.join("crates/pwf-infra"),
         "prepare checked SQLx queries",
         &prepare_arguments(check),
         &environment,
@@ -57,7 +57,7 @@ fn prepare_arguments(check: bool) -> Vec<&'static str> {
     if check {
         arguments.push("--check");
     }
-    arguments.extend(["--no-dotenv", "--", "--package", "pwf-application"]);
+    arguments.extend(["--no-dotenv", "--", "--package", "pwf-infra"]);
     arguments
 }
 
@@ -82,13 +82,7 @@ mod tests {
     fn prepare_check_changes_only_the_sqlx_check_flag() {
         assert_eq!(
             prepare_arguments(false),
-            [
-                "prepare",
-                "--no-dotenv",
-                "--",
-                "--package",
-                "pwf-application",
-            ]
+            ["prepare", "--no-dotenv", "--", "--package", "pwf-infra",]
         );
         assert_eq!(
             prepare_arguments(true),
@@ -98,7 +92,7 @@ mod tests {
                 "--no-dotenv",
                 "--",
                 "--package",
-                "pwf-application",
+                "pwf-infra",
             ]
         );
     }

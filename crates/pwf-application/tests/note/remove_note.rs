@@ -71,7 +71,7 @@ async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
                 selector: identifier.parse().unwrap(),
             },
             &store,
-            &pool,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
             &mut confirmation,
         )
         .await
@@ -105,7 +105,7 @@ async fn missing_note_wins_over_adapter_delete_failure(pool: sqlx::SqlitePool) {
             selector: "1".parse().unwrap(),
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &mut confirmation,
     )
     .await
@@ -132,7 +132,7 @@ async fn identifier_from_another_project_is_rejected(pool: sqlx::SqlitePool) {
             selector: "BAR-NOTE-0001".parse().unwrap(),
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &mut confirmation,
     )
     .await
@@ -161,7 +161,7 @@ async fn decline_preserves_the_note(pool: sqlx::SqlitePool) {
             selector: "7".parse().unwrap(),
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &mut confirmation,
     )
     .await

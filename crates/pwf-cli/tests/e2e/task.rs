@@ -112,7 +112,7 @@ fn task_lifecycle_is_observable_through_json() {
         .command()
         .args([
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "blocker",
             "--goal",
@@ -125,7 +125,7 @@ fn task_lifecycle_is_observable_through_json() {
         .command()
         .args([
             "add",
-            "foo-bar",
+            "foo",
             "--title",
             "just done",
             "--goal",
@@ -160,7 +160,7 @@ fn task_lifecycle_is_observable_through_json() {
         .args([
             "edit",
             "FOO-0002",
-            "--prompt",
+            "--body",
             "ship it / preserve the revised goal",
             "--remove-tags",
             "--add-tag",

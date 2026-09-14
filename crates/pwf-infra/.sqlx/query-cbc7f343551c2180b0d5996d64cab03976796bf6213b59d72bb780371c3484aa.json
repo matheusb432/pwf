@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE projects SET last_task_number = MAX(COALESCE(last_task_number, 0), ?) WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "cbc7f343551c2180b0d5996d64cab03976796bf6213b59d72bb780371c3484aa"
+}

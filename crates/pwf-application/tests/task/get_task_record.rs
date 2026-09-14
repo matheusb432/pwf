@@ -17,9 +17,13 @@ async fn retrieval_preserves_malformed_metadata(pool: sqlx::SqlitePool) {
         ..task_record("FOO-0001")
     };
     let store = InMemoryStore::default().with_project("foo", vec![record.clone()]);
-    let result = get_task_record::execute(&record.id, &store, &pool)
-        .await
-        .unwrap();
+    let result = get_task_record::execute(
+        &record.id,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
     assert_eq!(result, record);
 }
 
@@ -27,9 +31,13 @@ async fn retrieval_preserves_malformed_metadata(pool: sqlx::SqlitePool) {
 async fn retrieval_preserves_source_and_revision(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let (store, _) = staged_task();
-    let record = get_task_record::execute(&"FOO-0001".parse().unwrap(), &store, &pool)
-        .await
-        .unwrap();
+    let record = get_task_record::execute(
+        &"FOO-0001".parse().unwrap(),
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
     assert_eq!(record.source, FOO_0001_SOURCE);
     assert_eq!(record.revision.as_ref().len(), 64);
 }
@@ -40,9 +48,13 @@ async fn absent_tasks_and_ineligible_projects_are_not_found(pool: sqlx::SqlitePo
     insert_project(&pool, "BAR", "bar", "/projects/bar", "/tasks/bar", true).await;
     let store = InMemoryStore::default().with_project("bar", vec![task_record("BAR-0001")]);
     for id in ["FOO-0001", "BAR-0001", "MISS-0001"] {
-        let error = get_task_record::execute(&id.parse().unwrap(), &store, &pool)
-            .await
-            .unwrap_err();
+        let error = get_task_record::execute(
+            &id.parse().unwrap(),
+            &store,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(error, GetTaskRecordError::TaskNotFound { .. }));
     }
 }

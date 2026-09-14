@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+use pwf_application::project::update_project;
 use pwf_infra::user_settings::TomlSettingsStore;
 use pwf_models::project::HomeDirectory;
 use tokio::{sync::watch, task::JoinHandle};
@@ -39,15 +40,29 @@ async fn startup_skips_disabled_projects_and_observes_opt_in_and_paused_projects
     let disabled_snapshot = disabled.join("OFF.md");
     assert!(!disabled_snapshot.exists());
 
-    sqlx::query("UPDATE projects SET snapshot_enabled = 1 WHERE id = 'OFF'")
-        .execute(&state.pool)
-        .await?;
+    update_project::execute(
+        pwf_wire::project::UpdateProject {
+            id: "OFF".parse()?,
+            source: pwf_wire::patch_field::PatchField::NoAction,
+            obsidian_vault: pwf_wire::patch_field::PatchField::NoAction,
+            snapshot_enabled: pwf_wire::set_field::SetField::Set(true),
+        },
+        &state.projects,
+    )
+    .await?;
     await_snapshot(&disabled_snapshot, |source| source.contains("[[OFF-0001]]")).await?;
 
     let previous_snapshot = fs::read(&disabled_snapshot)?;
-    sqlx::query("UPDATE projects SET snapshot_enabled = 0 WHERE id = 'OFF'")
-        .execute(&state.pool)
-        .await?;
+    update_project::execute(
+        pwf_wire::project::UpdateProject {
+            id: "OFF".parse()?,
+            source: pwf_wire::patch_field::PatchField::NoAction,
+            obsidian_vault: pwf_wire::patch_field::PatchField::NoAction,
+            snapshot_enabled: pwf_wire::set_field::SetField::Set(false),
+        },
+        &state.projects,
+    )
+    .await?;
     let paused_snapshot = paused.join("PAU.md");
     write_task(&paused, "PAU-0002", "active")?;
     await_snapshot(&paused_snapshot, |source| source.contains("[[PAU-0002]]")).await?;

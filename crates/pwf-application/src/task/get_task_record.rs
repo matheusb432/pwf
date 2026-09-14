@@ -2,7 +2,7 @@ use pwf_models::{project::Project, task::TaskId};
 use pwf_wire::task::TaskRecord;
 
 use crate::{
-    ports::task_vault::TaskVault,
+    ports::{project_store::ProjectStore, task_vault::TaskVault},
     project::{get_active_project, get_project::GetProjectError},
 };
 
@@ -20,9 +20,11 @@ pub enum GetTaskRecordError {
 pub async fn execute(
     id: &TaskId,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<TaskRecord, GetTaskRecordError> {
-    load(id, store, pool).await.map(|loaded| loaded.record)
+    load(id, store, project_store)
+        .await
+        .map(|loaded| loaded.record)
 }
 
 pub(super) struct LoadedTaskRecord {
@@ -33,9 +35,9 @@ pub(super) struct LoadedTaskRecord {
 pub(super) async fn load(
     id: &TaskId,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<LoadedTaskRecord, GetTaskRecordError> {
-    let project = match get_active_project::execute(id.project_id(), pool).await {
+    let project = match get_active_project::execute(id.project_id(), project_store).await {
         Ok(project) => project,
         Err(GetProjectError::ProjectNotFound { .. }) => {
             return Err(GetTaskRecordError::TaskNotFound { id: id.clone() });

@@ -7,7 +7,7 @@ use pwf_models::{
     project::ProjectId,
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskReport,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, TaskBody, TaskId, TaskReport,
         TaskStatus, TaskTags, TaskTitle,
     },
 };
@@ -31,14 +31,14 @@ pub use pwf_models::task::{Task, TaskListLimit, TaskListLimitError};
 pub use record::{RawTaskTags, StoredBlockedBy, TaskRecord, TaskRecordError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskLane {
+pub enum TaskMarkerSection {
     Goal,
     Context,
     Constraint,
     DoneWhen,
 }
 
-impl TaskLane {
+impl TaskMarkerSection {
     fn label(self) -> &'static str {
         match self {
             Self::Goal => "goal",
@@ -50,18 +50,18 @@ impl TaskLane {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TaskLaneValueError {
-    #[error("{} cannot be empty.", lane.label())]
-    Empty { lane: TaskLane },
-    #[error("{} must be a single line.", lane.label())]
-    Multiline { lane: TaskLane },
+pub enum TaskMarkerSectionValueError {
+    #[error("{} cannot be empty.", section.label())]
+    Empty { section: TaskMarkerSection },
+    #[error("{} must be a single line.", section.label())]
+    Multiline { section: TaskMarkerSection },
 }
 
-impl TaskLaneValueError {
+impl TaskMarkerSectionValueError {
     #[must_use]
-    pub fn lane(&self) -> TaskLane {
+    pub fn section(&self) -> TaskMarkerSection {
         match self {
-            Self::Empty { lane } | Self::Multiline { lane } => *lane,
+            Self::Empty { section } | Self::Multiline { section } => *section,
         }
     }
 
@@ -75,30 +75,33 @@ impl TaskLaneValueError {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TaskLanes {
+pub struct TaskMarkerSections {
     goals: Vec<String>,
     context: Vec<String>,
     constraints: Vec<String>,
     done_when: Vec<String>,
 }
 
-impl TaskLanes {
-    /// Constructs ordered task lanes after trimming each single-line value.
+impl TaskMarkerSections {
+    /// Constructs ordered task sections after trimming each single-line value.
     ///
     /// # Errors
     ///
-    /// Returns [`TaskLaneValueError`] when any value is blank or contains a line break.
+    /// Returns [`TaskMarkerSectionValueError`] when any value is blank or contains a line break.
     pub fn try_new(
         goals: Vec<String>,
         context: Vec<String>,
         constraints: Vec<String>,
         done_when: Vec<String>,
-    ) -> Result<Self, TaskLaneValueError> {
+    ) -> Result<Self, TaskMarkerSectionValueError> {
         Ok(Self {
-            goals: normalize_lane(TaskLane::Goal, goals)?,
-            context: normalize_lane(TaskLane::Context, context)?,
-            constraints: normalize_lane(TaskLane::Constraint, constraints)?,
-            done_when: normalize_lane(TaskLane::DoneWhen, done_when)?,
+            goals: normalize_marker_section_values(TaskMarkerSection::Goal, goals)?,
+            context: normalize_marker_section_values(TaskMarkerSection::Context, context)?,
+            constraints: normalize_marker_section_values(
+                TaskMarkerSection::Constraint,
+                constraints,
+            )?,
+            done_when: normalize_marker_section_values(TaskMarkerSection::DoneWhen, done_when)?,
         })
     }
 
@@ -131,16 +134,19 @@ impl TaskLanes {
     }
 }
 
-fn normalize_lane(lane: TaskLane, values: Vec<String>) -> Result<Vec<String>, TaskLaneValueError> {
+fn normalize_marker_section_values(
+    section: TaskMarkerSection,
+    values: Vec<String>,
+) -> Result<Vec<String>, TaskMarkerSectionValueError> {
     values
         .into_iter()
         .map(|value| {
             if value.contains(['\n', '\r']) {
-                return Err(TaskLaneValueError::Multiline { lane });
+                return Err(TaskMarkerSectionValueError::Multiline { section });
             }
             let value = value.trim().to_string();
             if value.is_empty() {
-                return Err(TaskLaneValueError::Empty { lane });
+                return Err(TaskMarkerSectionValueError::Empty { section });
             }
             Ok(value)
         })
@@ -148,17 +154,20 @@ fn normalize_lane(lane: TaskLane, values: Vec<String>) -> Result<Vec<String>, Ta
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TaskLaneEdits {
-    additions: TaskLanes,
-    removals: Vec<TaskLane>,
+pub struct TaskMarkerSectionEdits {
+    additions: TaskMarkerSections,
+    removals: Vec<TaskMarkerSection>,
 }
 
-impl TaskLaneEdits {
+impl TaskMarkerSectionEdits {
     #[must_use]
-    pub fn new(additions: TaskLanes, removals: impl IntoIterator<Item = TaskLane>) -> Self {
+    pub fn new(
+        additions: TaskMarkerSections,
+        removals: impl IntoIterator<Item = TaskMarkerSection>,
+    ) -> Self {
         let mut normalized_removals = Vec::new();
-        for lane in removals {
-            push_unseen_lane(&mut normalized_removals, lane);
+        for section in removals {
+            push_unseen_section(&mut normalized_removals, section);
         }
         Self {
             additions,
@@ -167,12 +176,12 @@ impl TaskLaneEdits {
     }
 
     #[must_use]
-    pub fn additions(&self) -> &TaskLanes {
+    pub fn additions(&self) -> &TaskMarkerSections {
         &self.additions
     }
 
     #[must_use]
-    pub fn removals(&self) -> &[TaskLane] {
+    pub fn removals(&self) -> &[TaskMarkerSection] {
         &self.removals
     }
 
@@ -182,20 +191,26 @@ impl TaskLaneEdits {
     }
 }
 
-fn push_unseen_lane(lanes: &mut Vec<TaskLane>, lane: TaskLane) {
-    if !lanes.contains(&lane) {
-        lanes.push(lane);
+fn push_unseen_section(sections: &mut Vec<TaskMarkerSection>, section: TaskMarkerSection) {
+    if !sections.contains(&section) {
+        sections.push(section);
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum AddTaskPrompt {
+pub enum AddTaskBody {
     Shorthand(String),
-    Structured { title: TaskTitle, lanes: TaskLanes },
-    Body { title: TaskTitle, body: TaskPrompt },
+    Structured {
+        title: TaskTitle,
+        sections: TaskMarkerSections,
+    },
+    Body {
+        title: TaskTitle,
+        body: TaskBody,
+    },
 }
 
-impl AddTaskPrompt {
+impl AddTaskBody {
     #[must_use]
     pub fn from_shorthand(raw: impl Into<String>) -> Self {
         let mut raw = raw.into();
@@ -206,12 +221,12 @@ impl AddTaskPrompt {
     }
 
     #[must_use]
-    pub fn from_structured(title: TaskTitle, lanes: TaskLanes) -> Self {
-        Self::Structured { title, lanes }
+    pub fn from_structured(title: TaskTitle, sections: TaskMarkerSections) -> Self {
+        Self::Structured { title, sections }
     }
 
     #[must_use]
-    pub fn from_body(title: TaskTitle, body: TaskPrompt) -> Self {
+    pub fn from_body(title: TaskTitle, body: TaskBody) -> Self {
         Self::Body { title, body }
     }
 }
@@ -221,8 +236,8 @@ impl AddTaskPrompt {
 pub struct AddTask {
     /// Destination project ID.
     pub project_id: ProjectId,
-    /// Shorthand or structured task prompt.
-    pub prompt: AddTaskPrompt,
+    /// Shorthand or structured task body.
+    pub body: AddTaskBody,
     /// Task IDs in the `blocked_by` relationship.
     pub blocked_by: Option<BlockedBy>,
     /// Optional effort tier.
@@ -256,10 +271,10 @@ impl ClonedTaskProjectId {
 
 impl AddTask {
     #[must_use]
-    pub fn new(project_id: impl Into<ProjectId>, prompt: AddTaskPrompt) -> Self {
+    pub fn new(project_id: impl Into<ProjectId>, body: AddTaskBody) -> Self {
         Self {
             project_id: project_id.into(),
-            prompt,
+            body,
             blocked_by: None,
             effort: None,
             tags: None,
@@ -288,14 +303,14 @@ pub struct CompleteTask {
 pub enum EditTaskContentKind {
     Structured {
         title: SetField<TaskTitle>,
-        lanes: TaskLaneEdits,
+        sections: TaskMarkerSectionEdits,
     },
     AppendShorthand {
         title: SetField<TaskTitle>,
-        prompt: String,
+        body: String,
     },
     ReplaceShorthand {
-        prompt: String,
+        body: String,
     },
 }
 
@@ -304,32 +319,32 @@ pub enum EditTaskContentKind {
 pub struct EditTaskContent(EditTaskContentKind);
 
 impl EditTaskContent {
-    /// Creates an explicit title or lane edit.
+    /// Creates an explicit title or section edit.
     pub fn structured(
         title: SetField<TaskTitle>,
-        lanes: TaskLaneEdits,
+        sections: TaskMarkerSectionEdits,
     ) -> Result<Self, EditTaskContentError> {
-        if title.is_unchanged() && lanes.is_empty() {
+        if title.is_unchanged() && sections.is_empty() {
             return Err(EditTaskContentError::EmptyStructured);
         }
-        Ok(Self(EditTaskContentKind::Structured { title, lanes }))
+        Ok(Self(EditTaskContentKind::Structured { title, sections }))
     }
 
     /// Creates a non-empty shorthand append.
     pub fn append_shorthand(
         title: SetField<TaskTitle>,
-        prompt: String,
+        body: String,
     ) -> Result<Self, EditTaskContentError> {
-        if prompt.trim().is_empty() {
+        if body.trim().is_empty() {
             return Err(EditTaskContentError::EmptyAppend);
         }
-        Ok(Self(EditTaskContentKind::AppendShorthand { title, prompt }))
+        Ok(Self(EditTaskContentKind::AppendShorthand { title, body }))
     }
 
-    /// Creates a shorthand replacement for application parsing with the runtime lane syntax.
+    /// Creates a shorthand replacement for application parsing with the runtime section syntax.
     #[must_use]
-    pub fn replace_shorthand(prompt: String) -> Self {
-        Self(EditTaskContentKind::ReplaceShorthand { prompt })
+    pub fn replace_shorthand(body: String) -> Self {
+        Self(EditTaskContentKind::ReplaceShorthand { body })
     }
 
     #[must_use]
@@ -555,14 +570,14 @@ pub enum ActivateTaskOutcome {
 #[cfg(test)]
 mod tests {
     use super::{
-        AddTaskPrompt, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskEdits,
-        TaskLaneEdits, TaskLaneValueError, TaskLanes,
+        AddTaskBody, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskEdits,
+        TaskMarkerSectionEdits, TaskMarkerSectionValueError, TaskMarkerSections,
     };
     use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
     #[test]
-    fn lanes_trim_outer_whitespace_and_preserve_literal_markers() {
-        let lanes = TaskLanes::try_new(
+    fn sections_trim_outer_whitespace_and_preserve_literal_markers() {
+        let sections = TaskMarkerSections::try_new(
             vec!["  keep /c literal  ".to_string()],
             Vec::new(),
             Vec::new(),
@@ -570,23 +585,23 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(lanes.goals(), ["keep /c literal"]);
+        assert_eq!(sections.goals(), ["keep /c literal"]);
     }
 
     #[test]
-    fn lanes_reject_blank_and_multiline_values() {
+    fn sections_reject_blank_and_multiline_values() {
         assert!(matches!(
-            TaskLanes::try_new(vec!["  ".to_string()], Vec::new(), Vec::new(), Vec::new()),
-            Err(TaskLaneValueError::Empty { .. })
+            TaskMarkerSections::try_new(vec!["  ".to_string()], Vec::new(), Vec::new(), Vec::new()),
+            Err(TaskMarkerSectionValueError::Empty { .. })
         ));
         assert!(matches!(
-            TaskLanes::try_new(
+            TaskMarkerSections::try_new(
                 Vec::new(),
                 vec!["one\ntwo".to_string()],
                 Vec::new(),
                 Vec::new(),
             ),
-            Err(TaskLaneValueError::Multiline { .. })
+            Err(TaskMarkerSectionValueError::Multiline { .. })
         ));
     }
 
@@ -600,30 +615,26 @@ mod tests {
                 "título /g keep  spacing",
             ),
         ] {
-            let prompt: AddTaskPrompt = AddTaskPrompt::from_shorthand(raw);
-            assert!(
-                matches!(prompt, super::AddTaskPrompt::Shorthand(prompt) if prompt == expected)
-            );
+            let body: AddTaskBody = AddTaskBody::from_shorthand(raw);
+            assert!(matches!(body, super::AddTaskBody::Shorthand(body) if body == expected));
         }
     }
 
     #[test]
-    fn add_prompt_variants_preserve_authored_content() {
-        let prompt = AddTaskPrompt::from_shorthand("task /g keep text");
-        assert!(
-            matches!(prompt, super::AddTaskPrompt::Shorthand(prompt) if prompt == "task /g keep text")
-        );
+    fn add_body_variants_preserve_authored_content() {
+        let body = AddTaskBody::from_shorthand("task /g keep text");
+        assert!(matches!(body, super::AddTaskBody::Shorthand(body) if body == "task /g keep text"));
         let title = pwf_models::task::TaskTitle::try_new("typed task").unwrap();
-        let prompt = AddTaskPrompt::from_structured(title, TaskLanes::default());
+        let body = AddTaskBody::from_structured(title, TaskMarkerSections::default());
         assert!(
-            matches!(prompt, super::AddTaskPrompt::Structured { title, lanes } if title.as_ref() == "typed task" && lanes.is_empty())
+            matches!(body, super::AddTaskBody::Structured { title, sections } if title.as_ref() == "typed task" && sections.is_empty())
         );
     }
 
     #[test]
     fn edit_contracts_reject_empty_shapes() {
         assert!(matches!(
-            EditTaskContent::structured(SetField::NoAction, TaskLaneEdits::default()),
+            EditTaskContent::structured(SetField::NoAction, TaskMarkerSectionEdits::default()),
             Err(EditTaskContentError::EmptyStructured)
         ));
         assert!(matches!(

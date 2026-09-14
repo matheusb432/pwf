@@ -92,6 +92,7 @@ impl Shape {
 pub struct Workload {
     runtime: tokio::runtime::Runtime,
     pool: sqlx::SqlitePool,
+    projects: pwf_infra::project_store::SqliteProjectStore,
     store: ObsidianStore,
     shape: Shape,
     root: TaskId,
@@ -152,6 +153,7 @@ impl Workload {
         let blockers = require(BlockedBy::try_new(vec![root.clone()]), "building blockers");
         Self {
             runtime,
+            projects: pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
             pool,
             store,
             shape,
@@ -170,7 +172,7 @@ impl Workload {
                     blockers: &self.blockers,
                 },
                 &self.store,
-                &self.pool,
+                &self.projects,
             )),
             "gathering dependencies",
         )
@@ -191,7 +193,7 @@ impl Workload {
                     mode,
                 },
                 &self.store,
-                &self.pool,
+                &self.projects,
             )),
             "building graph",
         )

@@ -42,7 +42,7 @@ async fn blocked_by_mode_traverses_cross_project_ancestors_in_stored_order(pool:
             mode: TaskDagMode::BlockedBy,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -109,7 +109,13 @@ async fn failed_project_scan_is_reused_for_every_reference_only_within_the_reque
         mode: TaskDagMode::BlockedBy,
     };
     for _ in 0..2 {
-        let graph = get_task_dag::execute(&query, &store, &pool).await.unwrap();
+        let graph = get_task_dag::execute(
+            &query,
+            &store,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             graph
                 .nodes()
@@ -165,7 +171,7 @@ async fn status_filter_keeps_the_root_and_stops_at_hidden_dependents(pool: sqlx:
             mode: TaskDagMode::Blocks,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -211,7 +217,7 @@ async fn depth_limit_marks_a_hidden_upstream_layer(pool: sqlx::SqlitePool) {
             mode: TaskDagMode::BlockedBy,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -250,7 +256,7 @@ async fn missing_blocker_is_a_terminal_diagnostic_node(pool: sqlx::SqlitePool) {
             mode: TaskDagMode::BlockedBy,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -293,7 +299,7 @@ async fn malformed_blocked_by_keeps_the_task_and_stops_its_branch(pool: sqlx::Sq
             mode: TaskDagMode::BlockedBy,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -333,7 +339,7 @@ async fn full_mode_does_not_switch_directions_at_surrounding_nodes(pool: sqlx::S
             mode: TaskDagMode::Full,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -371,7 +377,7 @@ async fn reachable_cycle_is_rejected(pool: sqlx::SqlitePool) {
             mode: TaskDagMode::BlockedBy,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap_err();
@@ -396,7 +402,7 @@ async fn blocks_mode_fails_when_a_project_cannot_be_scanned(pool: sqlx::SqlitePo
             mode: TaskDagMode::Blocks,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap_err();
@@ -428,7 +434,7 @@ async fn node_limit_rejects_a_partial_graph(pool: sqlx::SqlitePool) {
             mode: TaskDagMode::BlockedBy,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap_err();
@@ -465,7 +471,7 @@ async fn edge_limit_rejects_a_partial_graph(pool: sqlx::SqlitePool) {
             mode: TaskDagMode::BlockedBy,
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap_err();

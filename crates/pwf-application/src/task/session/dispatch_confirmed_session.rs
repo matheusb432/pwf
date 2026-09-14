@@ -1,5 +1,4 @@
 //! Plans, confirms, and dispatches one session as a single application operation.
-
 use pwf_models::project::HomeDirectory;
 use pwf_wire::task::session::{
     DispatchedSession, PlanSession, PlannedSession, PreparedSessionDispatch,
@@ -13,6 +12,7 @@ use crate::ports::{
     agent::AgentClient,
     confirmation::{ConfirmationClient, ConfirmationClientError},
     project_directory::ProjectDirectoryClient,
+    project_store::ProjectStore,
     task_vault::{ExpectedTaskRevision, TaskMutationError, TaskVault},
 };
 
@@ -34,12 +34,13 @@ pub enum DispatchConfirmedSessionError {
 pub async fn execute(
     command: &PlanSession,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     home: &HomeDirectory,
     clients: &SessionPlanningClients<impl AgentClient, impl ProjectDirectoryClient>,
     confirmation: &mut dyn ConfirmationClient<Confirmation = PreparedSessionDispatch>,
 ) -> Result<DispatchedSession, DispatchConfirmedSessionError> {
-    let prepared = match plan_session::execute(command, store, pool, home, clients).await? {
+    let prepared = match plan_session::execute(command, store, project_store, home, clients).await?
+    {
         PlannedSession::Dispatch(prepared) => prepared,
         PlannedSession::DryRun(_) => return Err(DispatchConfirmedSessionError::DryRunPlan),
     };

@@ -3,7 +3,7 @@ use std::fmt;
 use pwf_models::{
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, PriorityTier, Task, TaskId, TaskPrompt, TaskStatus,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, Task, TaskBody, TaskId, TaskStatus,
         TaskTags, TaskTimestamp, TaskTitle,
     },
 };
@@ -154,7 +154,7 @@ impl TaskRecord {
             id: self.id,
             title,
             status: self.status,
-            prompt: TaskPrompt::new(self.body),
+            body: TaskBody::new(self.body),
             created_at: self.created_at,
             completed_at: self.completed_at,
             commits,

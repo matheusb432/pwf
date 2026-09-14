@@ -1,5 +1,4 @@
 //! Adds one note to a managed project.
-
 use pwf_models::{note::NoteId, project::ProjectName, task::TaskTimestampError};
 use pwf_wire::note::{AddNote, MutatedNote};
 
@@ -7,6 +6,7 @@ use crate::{
     ports::{
         clock::Clock,
         project_note::{NewProjectNote, ProjectNotes},
+        project_store::ProjectStore,
     },
     project::{get_active_project, get_project::GetProjectError},
 };
@@ -28,10 +28,10 @@ pub enum AddNoteError {
 pub async fn execute(
     command: AddNote,
     store: &impl ProjectNotes,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     clock: &impl Clock,
 ) -> Result<MutatedNote, AddNoteError> {
-    let project = get_active_project::execute(command.project_id, pool).await?;
+    let project = get_active_project::execute(command.project_id, project_store).await?;
     let notes = store
         .list_notes(&project)
         .map_err(|error| AddNoteError::Store(anyhow::Error::new(error)))?;

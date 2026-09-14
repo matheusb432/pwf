@@ -14,6 +14,7 @@ use super::{
 };
 use crate::ports::{
     confirmation::{ConfirmationClient, ConfirmationClientError},
+    project_store::ProjectStore,
     task_vault::{NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite},
 };
 
@@ -32,11 +33,11 @@ pub enum ActivateTaskError {
 pub async fn execute(
     command: &ActivateTask,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = ActivateTaskConfirmation>,
 ) -> Result<TaskMutationResult<ActivateTaskOutcome>, ActivateTaskError> {
     let LoadedTaskRecord { project, record } =
-        get_task_record::load(&command.id, store, pool).await?;
+        get_task_record::load(&command.id, store, project_store).await?;
     let summary = TaskMutationSummary {
         id: command.id.clone(),
         title: record.title.clone(),

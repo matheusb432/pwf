@@ -25,22 +25,32 @@ async fn clone_keeps_the_source_project_title_and_authored_body(pool: sqlx::Sqli
         ..task_record("FOO-0001")
     };
     let (store, command) = staged(&pool, source.clone()).await;
-    sqlx::query("DELETE FROM task_prompt_lanes")
+    sqlx::query("DELETE FROM task_marker_sections")
         .execute(&pool)
         .await
         .unwrap();
 
-    let result = clone_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
-    let cloned = get_task::execute(&result.outcome, &store, &pool)
-        .await
-        .unwrap();
+    let result = clone_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
+    let cloned = get_task::execute(
+        &result.outcome,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
 
     assert_ne!(cloned.id, source.id);
     assert_eq!(cloned.id.project_id(), source.id.project_id());
     assert_eq!(cloned.title.as_ref(), source.title);
-    assert_eq!(cloned.prompt.as_ref(), source.body);
+    assert_eq!(cloned.body.as_ref(), source.body);
     assert_eq!(store.tasks("foo").len(), 2);
     assert_eq!(store.tasks("foo")[0], source);
 }
@@ -53,9 +63,15 @@ async fn clone_rejects_an_invalid_source_without_writing(pool: sqlx::SqlitePool)
     };
     let (store, command) = staged(&pool, source.clone()).await;
 
-    let error = clone_task::execute(command, &store, &pool, &FixedClock)
-        .await
-        .unwrap_err();
+    let error = clone_task::execute(
+        command,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(
         error,

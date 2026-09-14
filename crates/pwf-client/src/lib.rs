@@ -12,6 +12,8 @@ use tonic::{
 use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
 
 pub mod confirmation;
+mod error;
+pub use error::ClientError;
 pub mod note;
 pub mod project;
 mod release;
@@ -38,16 +40,6 @@ pub enum ConnectError {
     LocalEndpoint(#[from] std::io::Error),
     #[error(transparent)]
     Transport(#[from] pwf_local_transport::ConnectError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ClientError {
-    #[error("pwf-server returned an invalid task: {0}")]
-    InvalidTaskResponse(#[from] DecodeGetTaskResponseError),
-    #[error("pwf-server request failed: {0}")]
-    Rpc(#[from] Status),
-    #[error("pwf-server returned an invalid task dependency graph: {0}")]
-    InvalidTaskDagResponse(#[from] DecodeGetTaskDagResponseError),
 }
 
 #[must_use]

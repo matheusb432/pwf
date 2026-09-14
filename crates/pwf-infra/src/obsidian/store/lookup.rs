@@ -96,23 +96,15 @@ impl ObsidianStore {
         .map(|notes| notes.into_iter().map(|(identity, _)| identity).collect())
     }
 
-    pub(super) fn next_task_id(&self, project: &Project) -> Result<TaskId, ObsidianStoreError> {
-        let maximum = self
+    pub(super) fn highest_task_id(
+        &self,
+        project: &Project,
+    ) -> Result<Option<TaskId>, ObsidianStoreError> {
+        Ok(self
             .task_files_for_project(project)?
             .into_iter()
-            .filter_map(|task| {
-                task.id
-                    .as_ref()
-                    .split_once('-')
-                    .and_then(|(_, number)| number.parse::<u32>().ok())
-            })
-            .max()
-            .unwrap_or(0);
-        TaskId::try_new(format!("{}-{:04}", project.id, maximum + 1)).map_err(|_| {
-            ObsidianStoreError::TaskIdSequenceExhausted {
-                project_id: project.id.clone(),
-            }
-        })
+            .map(|task| task.id)
+            .max_by_key(TaskId::number))
     }
 }
 

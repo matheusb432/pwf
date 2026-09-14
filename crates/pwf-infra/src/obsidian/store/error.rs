@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use pwf_models::{
     note::NoteTitleError,
-    project::ProjectId,
     task::{ParseTaskStatusError, TaskId, TaskTimestampError},
 };
 
@@ -217,8 +216,6 @@ pub enum ObsidianStoreError {
         #[source]
         source: std::io::Error,
     },
-    #[error("Task ID sequence is exhausted for project {project_id}")]
-    TaskIdSequenceExhausted { project_id: ProjectId },
     #[error("task ID {id} is already occupied at {}; retry the command", path.display())]
     TaskIdOccupied { id: TaskId, path: PathBuf },
 }

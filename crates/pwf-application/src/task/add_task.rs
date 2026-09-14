@@ -1,18 +1,20 @@
 use pwf_models::task::{TaskId, TaskTimestampError};
-use pwf_wire::task::{AddTask, AddTaskPrompt, TaskMutationResult, TaskMutationSummary};
+use pwf_wire::task::{AddTask, AddTaskBody, TaskMutationResult, TaskMutationSummary};
 
 use super::{
-    TaskPromptTitleError,
+    TaskBodyTitleError,
     blocked_by::{self, BlockedByValidationError},
-    content::{render, render_lanes},
+    content::{render, render_marker_sections},
     infer_task_title,
-    lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
+    marker_sections::TaskMarkerSectionsError,
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
 };
 use crate::{
     ports::{
         clock::Clock,
-        task_vault::{NewTask, NewTaskBody, TaskVault},
+        project_store::ProjectStore,
+        task_marker_section_store::TaskMarkerSectionStore,
+        task_vault::{NewTask, NewTaskBody, TaskInsertion, TaskVault},
     },
     project::{get_active_project, get_project::GetProjectError},
 };
@@ -49,9 +51,9 @@ pub enum AddTaskError {
         reason: Box<str>,
     },
     #[error(transparent)]
-    InvalidTitle(#[from] TaskPromptTitleError),
+    InvalidTitle(#[from] TaskBodyTitleError),
     #[error(transparent)]
-    PromptLanes(#[from] TaskPromptLanesError),
+    MarkerSections(#[from] TaskMarkerSectionsError),
     #[error("cannot read the task creation time: {0}")]
     Clock(#[from] TaskTimestampError),
     #[error(transparent)]
@@ -62,40 +64,41 @@ pub enum AddTaskError {
 pub async fn execute(
     command: AddTask,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     clock: &impl Clock,
+    marker_section_store: &impl TaskMarkerSectionStore,
 ) -> Result<TaskMutationResult<TaskId>, AddTaskError> {
     let AddTask {
         project_id,
-        prompt,
+        body,
         blocked_by,
         effort,
         priority,
         tags,
     } = command;
-    let project = get_active_project::execute(&project_id, pool).await?;
-    let (title, body) = match prompt {
-        AddTaskPrompt::Body { title, body } => (title, NewTaskBody::Verbatim(body)),
-        AddTaskPrompt::Shorthand(prompt) => {
-            let lanes = TaskPromptLanes::load(pool).await?;
+    let project = get_active_project::execute(&project_id, project_store).await?;
+    let (title, body) = match body {
+        AddTaskBody::Body { title, body } => (title, NewTaskBody::Verbatim(body)),
+        AddTaskBody::Shorthand(body) => {
+            let sections = marker_section_store.get_task_marker_sections().await?;
             (
-                infer_task_title(&prompt, &lanes)?,
-                NewTaskBody::Rendered(render(&prompt, &lanes)),
+                infer_task_title(&body, &sections)?,
+                NewTaskBody::Rendered(render(&body, &sections)),
             )
         }
-        AddTaskPrompt::Structured { title, lanes } => {
-            let configuration = TaskPromptLanes::load(pool).await?;
+        AddTaskBody::Structured { title, sections } => {
+            let configuration = marker_section_store.get_task_marker_sections().await?;
             (
                 title,
-                NewTaskBody::Rendered(render_lanes(&lanes, &configuration)),
+                NewTaskBody::Rendered(render_marker_sections(&sections, &configuration)),
             )
         }
     };
-    let id = store
-        .next_task_id(&project)
+    let id = allocate_task_id(&project, store, project_store)
+        .await
         .map_err(|source| AddTaskError::AllocateTaskId {
             project: project.title.clone(),
-            source: anyhow::Error::new(source),
+            source,
         })?;
 
     if let Some(blockers) = blocked_by.as_ref() {
@@ -105,7 +108,7 @@ pub async fn execute(
                 blockers,
             },
             store,
-            pool,
+            project_store,
         )
         .await
         .map_err(|error| match error {
@@ -123,7 +126,7 @@ pub async fn execute(
         status: pwf_models::task::TaskStatus::Active,
     };
     store
-        .insert_task(
+        .insert_task(TaskInsertion::new(
             &project,
             &id,
             NewTask {
@@ -135,7 +138,7 @@ pub async fn execute(
                 priority,
                 tags,
             },
-        )
+        ))
         .map_err(|source| AddTaskError::WriteStore(anyhow::Error::new(source)))?;
     Ok(TaskMutationResult {
         outcome: id,
@@ -162,4 +165,22 @@ fn map_blocked_by_error(error: BlockedByValidationError) -> AddTaskError {
             reason,
         },
     }
+}
+
+async fn allocate_task_id(
+    project: &pwf_models::project::Project,
+    tasks: &impl TaskVault,
+    projects: &impl ProjectStore,
+) -> Result<TaskId, anyhow::Error> {
+    if let Some(id) = projects.reserve_task_id(&project.id).await? {
+        return Ok(id);
+    }
+    let highest = tasks.highest_task_id(project)?;
+    projects
+        .advance_task_sequence(&project.id, highest.as_ref())
+        .await?;
+    projects
+        .reserve_task_id(&project.id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("task sequence was not initialized for {}", project.id))
 }

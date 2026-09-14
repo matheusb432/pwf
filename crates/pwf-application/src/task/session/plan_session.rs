@@ -1,5 +1,4 @@
 //! Plans and host-validates a task session before dispatch.
-
 use askama::Template;
 use pwf_models::{
     project::{HomeDirectory, Project, ProjectId, ProjectSourceValue},
@@ -17,7 +16,10 @@ use thiserror::Error;
 
 use super::{Agent, SessionEffort};
 use crate::{
-    ports::{agent::AgentClient, project_directory::ProjectDirectoryClient, task_vault::TaskVault},
+    ports::{
+        agent::AgentClient, project_directory::ProjectDirectoryClient, project_store::ProjectStore,
+        task_vault::TaskVault,
+    },
     project::{get_projects, runtime_path},
     task::{active_task, blocked_by},
 };
@@ -87,12 +89,12 @@ struct PlannedTask {
 pub async fn execute(
     command: &PlanSession,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
     home: &HomeDirectory,
     clients: &SessionPlanningClients<impl AgentClient, impl ProjectDirectoryClient>,
 ) -> Result<PlannedSession, PlanSessionError> {
     let (project, first_task, mut warnings) =
-        plan_task(command.task_ids.first(), store, pool).await?;
+        plan_task(command.task_ids.first(), store, project_store).await?;
     let first_title = first_task.heading.clone();
     let first_created = first_task.created;
     let singleton_thread_title = if command.task_ids.is_singleton() {
@@ -111,7 +113,8 @@ pub async fn execute(
     };
     let mut tasks = vec![first_task];
     for task_id in command.task_ids.iter().skip(1) {
-        let (resolved_project, task, task_warnings) = plan_task(task_id, store, pool).await?;
+        let (resolved_project, task, task_warnings) =
+            plan_task(task_id, store, project_store).await?;
         debug_assert_eq!(resolved_project.id, project.id);
         tasks.push(task);
         warnings.extend(task_warnings);
@@ -188,12 +191,12 @@ pub async fn execute(
 async fn plan_task(
     task_id: &TaskId,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<(Project, PlannedTask, Vec<SessionWarning>), PlanSessionError> {
-    let found = active_task::find(task_id, store, pool)
+    let found = active_task::find(task_id, store, project_store)
         .await
         .map_err(|error| PlanSessionError::FindTask(anyhow::Error::new(error)))?;
-    let launch = crate::task::task_projection::derive_flags(&pwf_models::task::TaskPrompt::new(
+    let launch = crate::task::task_projection::derive_flags(&pwf_models::task::TaskBody::new(
         found.record.body.trim(),
     ));
     if !launch.is_ready() {
@@ -202,7 +205,7 @@ async fn plan_task(
             launch,
         });
     }
-    let warnings = blocker_warnings(&found.record, store, pool).await;
+    let warnings = blocker_warnings(&found.record, store, project_store).await;
     let content = found.record.source.clone();
     let revision = PreparedTaskRevision {
         task_id: found.record.id.clone(),
@@ -226,7 +229,7 @@ async fn plan_task(
 async fn blocker_warnings(
     record: &TaskRecord,
     store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Vec<SessionWarning> {
     let blocked_by = match &record.blocked_by {
         StoredBlockedBy::Absent => return Vec::new(),
@@ -245,7 +248,7 @@ async fn blocker_warnings(
         .iter()
         .map(|id| id.project_id().clone())
         .collect();
-    let statuses = match get_projects::execute(&project_ids, pool).await {
+    let statuses = match get_projects::execute(&project_ids, project_store).await {
         Ok(projects) => blocked_by::statuses(blocked_by, store, None, &projects),
         Err(error) => blocked_by
             .iter()

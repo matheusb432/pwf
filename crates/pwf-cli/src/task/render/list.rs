@@ -19,19 +19,19 @@ pub(in crate::task) fn render_list(
     if result.tasks.is_empty() {
         return match status_filter {
             TaskStatusFilter::Active => {
-                format!("No active task prompts found in {location}.\n")
+                format!("No active task bodies found in {location}.\n")
             }
             TaskStatusFilter::Backlog => {
-                format!("No task prompts with status backlog found in {location}.\n")
+                format!("No task bodies with status backlog found in {location}.\n")
             }
             TaskStatusFilter::Done => {
-                format!("No task prompts with status done found in {location}.\n")
+                format!("No task bodies with status done found in {location}.\n")
             }
             TaskStatusFilter::Cancelled => {
-                format!("No task prompts with status cancelled found in {location}.\n")
+                format!("No task bodies with status cancelled found in {location}.\n")
             }
             TaskStatusFilter::All | TaskStatusFilter::Unspecified => {
-                format!("No task prompts found in {location}.\n")
+                format!("No task bodies found in {location}.\n")
             }
         };
     }
@@ -147,8 +147,8 @@ fn blocked_by_is_warning(blocked_by: &BlockedByStatus) -> bool {
 
 fn launch_issue(issue: TaskIssue) -> &'static str {
     match TaskIssueKind::try_from(issue.kind).ok() {
-        Some(TaskIssueKind::PlaceholderPrompt) => {
-            "Prompt is a placeholder; define a real prompt before launching."
+        Some(TaskIssueKind::PlaceholderBody) => {
+            "Body is a placeholder; define a real body before launching."
         }
         Some(TaskIssueKind::Unspecified) | None => "Invalid launch issue from server.",
     }
@@ -177,7 +177,7 @@ mod tests {
             project: "foo".to_string(),
             status: TaskStatus::Active as i32,
             heading: "sample task".to_string(),
-            prompt: String::new(),
+            body: String::new(),
             project_path: Some("/project".to_string()),
             file_path: "FOO-0001.md".to_string(),
             launch_issues: Vec::new(),
@@ -321,10 +321,10 @@ mod tests {
     fn launch_diagnostics_apply_only_to_active_tasks() {
         let mut task = sample_task();
         task.launch_issues.push(TaskIssue {
-            kind: TaskIssueKind::PlaceholderPrompt as i32,
+            kind: TaskIssueKind::PlaceholderBody as i32,
         });
         let output = diagnostics(&task);
-        assert!(output.contains("Prompt is a placeholder"));
+        assert!(output.contains("Body is a placeholder"));
         assert!(output.contains("Fix: edit FOO-0001.md"));
         task.status = TaskStatus::Done as i32;
         assert!(diagnostics(&task).is_empty());

@@ -5,12 +5,17 @@ use super::{
     Project,
     get_project::{self, GetProjectError},
 };
+use crate::ports::project_store::ProjectStore;
 
 /// Reads one active managed project.
 #[cqrsy::query]
 pub async fn execute(
     id: impl Into<ProjectId>,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<Project, GetProjectError> {
-    get_project::execute(GetProject::new(id, ProjectStatusFilter::ActiveOnly), pool).await
+    get_project::execute(
+        GetProject::new(id, ProjectStatusFilter::ActiveOnly),
+        project_store,
+    )
+    .await
 }

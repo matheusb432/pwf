@@ -4,7 +4,7 @@ use futures::Stream;
 use pwf_application::{
     ports::{confirmation::ConfirmationClientError, task_vault::TaskMutationError},
     task::{
-        CloseTaskError, TaskPromptLanesError,
+        CloseTaskError, TaskMarkerSectionsError,
         activate_task::{self, ActivateTaskError},
         add_task::{self, AddTaskError},
         backlog_task::{self, BacklogTaskError},
@@ -55,14 +55,21 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         request: Request<pb::CreateTaskRequest>,
     ) -> Result<Response<pb::CreateTaskResponse>, Status> {
         let command = proto::task::create_task_request(request.into_inner())?;
-        let _mutation_guard = self.state.task_mutations.lock().await;
-        add_task::execute(
-            command,
-            &self.state.store,
-            &self.state.pool,
-            &self.state.clock,
-        )
+        let state = self.state.clone();
+        let mutation_guard = state.task_mutations.clone().lock_owned().await;
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let _mutation_guard = mutation_guard;
+            runtime.block_on(add_task::execute(
+                command,
+                &state.store,
+                &state.projects,
+                &state.clock,
+                &state.task_marker_sections,
+            ))
+        })
         .await
+        .map_err(|error| Status::internal(format!("task creation worker failed: {error}")))?
         .map(proto::task::create_task_response)
         .map(Response::new)
         .map_err(create_task_status)
@@ -77,8 +84,9 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         clone_task::execute(
             command,
             &self.state.store,
-            &self.state.pool,
+            &self.state.projects,
             &self.state.clock,
+            &self.state.task_marker_sections,
         )
         .await
         .map(Into::into)
@@ -98,7 +106,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         cancel_task::execute(
             &command,
             &self.state.store,
-            &self.state.pool,
+            &self.state.projects,
             &self.state.clock,
         )
         .await
@@ -113,7 +121,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
     ) -> Result<Response<pb::BacklogTaskResponse>, Status> {
         let command = request.into_inner().try_into()?;
         let _mutation_guard = self.state.task_mutations.lock().await;
-        backlog_task::execute(&command, &self.state.store, &self.state.pool)
+        backlog_task::execute(&command, &self.state.store, &self.state.projects)
             .await
             .map(Into::into)
             .map(Response::new)
@@ -129,7 +137,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         complete_task::execute(
             &command,
             &self.state.store,
-            &self.state.pool,
+            &self.state.projects,
             &self.state.clock,
         )
         .await
@@ -144,11 +152,16 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
     ) -> Result<Response<pb::UpdateTaskResponse>, Status> {
         let command = proto::task::update_task_request(request.into_inner())?;
         let _mutation_guard = self.state.task_mutations.lock().await;
-        edit_task::execute(command, &self.state.store, &self.state.pool)
-            .await
-            .map(proto::task::update_task_response)
-            .map(Response::new)
-            .map_err(|error| edit_task_status(&error))
+        edit_task::execute(
+            command,
+            &self.state.store,
+            &self.state.projects,
+            &self.state.task_marker_sections,
+        )
+        .await
+        .map(proto::task::update_task_response)
+        .map(Response::new)
+        .map_err(|error| edit_task_status(&error))
     }
 
     async fn get_task(
@@ -156,7 +169,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         request: Request<pb::GetTaskRequest>,
     ) -> Result<Response<pb::GetTaskResponse>, Status> {
         let query = request.into_inner().try_into()?;
-        get_task::execute(&query, &self.state.store, &self.state.pool)
+        get_task::execute(&query, &self.state.store, &self.state.projects)
             .await
             .map(Into::into)
             .map(Response::new)
@@ -168,7 +181,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         request: Request<pb::GetTaskRecordRequest>,
     ) -> Result<Response<pb::GetTaskRecordResponse>, Status> {
         let id = request.into_inner().try_into()?;
-        get_task_record::execute(&id, &self.state.store, &self.state.pool)
+        get_task_record::execute(&id, &self.state.store, &self.state.projects)
             .await
             .map(Into::into)
             .map(Response::new)
@@ -180,7 +193,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         request: Request<pb::GetTaskDagRequest>,
     ) -> Result<Response<pb::GetTaskDagResponse>, Status> {
         let query = proto::task::get_task_dag_request(request.into_inner())?;
-        let graph = get_task_dag::execute(&query, &self.state.store, &self.state.pool)
+        let graph = get_task_dag::execute(&query, &self.state.store, &self.state.projects)
             .await
             .map_err(|error| get_task_dag_status(&error))?;
         Ok(Response::new(proto::task::get_task_dag_response(graph)))
@@ -194,7 +207,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         list_tasks::execute(
             &query,
             &self.state.store,
-            &self.state.pool,
+            &self.state.projects,
             &self.state.store,
             &self.state.task_list_snapshots,
             &self.state.user_settings,
@@ -233,13 +246,14 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         .with_mutation_lock(self.state.task_mutations.clone());
         let state = self.state.clone();
         tokio::spawn(async move {
-            let item = remove_task::execute(&command, &state.store, &state.pool, &mut confirmation)
-                .await
-                .map(proto::task::delete_task_result)
-                .map(|result| pb::DeleteTaskResponse {
-                    value: Some(pb::delete_task_response::Value::Result(result)),
-                })
-                .map_err(delete_task_status);
+            let item =
+                remove_task::execute(&command, &state.store, &state.projects, &mut confirmation)
+                    .await
+                    .map(proto::task::delete_task_result)
+                    .map(|result| pb::DeleteTaskResponse {
+                        value: Some(pb::delete_task_response::Value::Result(result)),
+                    })
+                    .map_err(delete_task_status);
             let _ = outbound.send(item).await;
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
@@ -277,7 +291,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         tokio::spawn(async move {
             confirmation.lock_mutations().await;
             let item =
-                activate_task::execute(&command, &state.store, &state.pool, &mut confirmation)
+                activate_task::execute(&command, &state.store, &state.projects, &mut confirmation)
                     .await
                     .map(proto::task::activate_task_result)
                     .map(|result| pb::ActivateTaskResponse {
@@ -328,7 +342,7 @@ fn create_task_status(error: AddTaskError) -> Status {
         | AddTaskError::SelfBlockedBy { .. }
         | AddTaskError::BlockedByCycle { .. } => Status::failed_precondition(message),
         AddTaskError::InvalidTitle(_) => Status::invalid_argument(message),
-        AddTaskError::PromptLanes(error) => prompt_lanes_status(&error),
+        AddTaskError::MarkerSections(error) => marker_sections_status(&error),
         AddTaskError::MalformedBlockedBy { .. } => Status::data_loss(message),
 
         AddTaskError::WriteStore { .. }
@@ -382,13 +396,13 @@ fn edit_task_status(error: &EditTaskError) -> Status {
         EditTaskError::Mutation(error) => task_mutation_status(error),
 
         EditTaskError::InvalidTitle(_) => Status::invalid_argument(message),
-        EditTaskError::PromptLanes(error) => prompt_lanes_status(error),
+        EditTaskError::MarkerSections(error) => marker_sections_status(error),
         EditTaskError::ClosedTask { .. }
         | EditTaskError::InvalidPersistedTitle { .. }
         | EditTaskError::UnknownBlockedByIds { .. }
         | EditTaskError::SelfBlockedBy { .. }
         | EditTaskError::BlockedByCycle { .. }
-        | EditTaskError::AmbiguousLanes { .. } => Status::failed_precondition(message),
+        | EditTaskError::AmbiguousMarkerSections { .. } => Status::failed_precondition(message),
         EditTaskError::InvalidTagsFrontmatter { .. } | EditTaskError::MalformedBlockedBy { .. } => {
             Status::data_loss(message)
         }
@@ -398,13 +412,13 @@ fn edit_task_status(error: &EditTaskError) -> Status {
     }
 }
 
-fn prompt_lanes_status(error: &TaskPromptLanesError) -> Status {
+fn marker_sections_status(error: &TaskMarkerSectionsError) -> Status {
     match error {
-        TaskPromptLanesError::Database(_) => Status::internal(error.to_string()),
-        TaskPromptLanesError::InvalidLaneSet { .. }
-        | TaskPromptLanesError::InvalidLane { .. }
-        | TaskPromptLanesError::InvalidConfiguration(_)
-        | TaskPromptLanesError::InvalidDefinitionCount { .. } => {
+        TaskMarkerSectionsError::Database(_) => Status::internal(error.to_string()),
+        TaskMarkerSectionsError::InvalidSectionSet { .. }
+        | TaskMarkerSectionsError::InvalidSection { .. }
+        | TaskMarkerSectionsError::InvalidConfiguration(_)
+        | TaskMarkerSectionsError::InvalidDefinitionCount { .. } => {
             Status::data_loss(error.to_string())
         }
     }

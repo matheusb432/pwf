@@ -39,7 +39,7 @@ async fn explicit_edits_preserve_omitted_title_and_pass_each_patch_operation(
             edits: edits(SetField::NoAction),
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap();
@@ -74,7 +74,7 @@ async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
                 edits: edits(SetField::Set("new message")),
             },
             &store,
-            &pool,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         )
         .await
         .unwrap();
@@ -96,7 +96,7 @@ async fn missing_note_is_reported(pool: sqlx::SqlitePool) {
             edits: edits(SetField::Set("new message")),
         },
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
     )
     .await
     .unwrap_err();

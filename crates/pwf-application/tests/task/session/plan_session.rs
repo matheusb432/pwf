@@ -75,7 +75,7 @@ async fn plan(
     let planned = plan_session::execute(
         command,
         store,
-        pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &HomeDirectory::new("/home/dev".into()),
         clients,
     )
@@ -110,7 +110,7 @@ async fn planning_uses_only_the_explicit_model_override(pool: sqlx::SqlitePool) 
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn planning_uses_one_compound_identity_and_keeps_task_prompt_order(
+async fn planning_uses_one_compound_identity_and_keeps_task_body_order(
     pool: sqlx::SqlitePool,
 ) -> anyhow::Result<()> {
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
@@ -134,7 +134,7 @@ async fn planning_uses_one_compound_identity_and_keeps_task_prompt_order(
     let planned = plan_session::execute(
         &command,
         &store,
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &HomeDirectory::new("/home/dev".into()),
         &clients,
     )
@@ -267,7 +267,7 @@ async fn planning_rejects_missing_ambiguous_and_closed_tasks(pool: sqlx::SqliteP
         let error = plan_session::execute(
             &command(None),
             &store,
-            &pool,
+            &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
             &HomeDirectory::new("/home/dev".into()),
             &clients,
         )
@@ -309,7 +309,7 @@ async fn unknown_project_id_preserves_the_resolution_error(pool: sqlx::SqlitePoo
     let error = plan_session::execute(
         &command,
         &InMemoryStore::default(),
-        &pool,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &HomeDirectory::new("/home/dev".into()),
         &clients,
     )

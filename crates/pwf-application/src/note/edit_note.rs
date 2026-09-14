@@ -1,5 +1,4 @@
 //! Edits selected fields of one note in a managed project.
-
 use pwf_models::{
     note::NoteSelector,
     project::{ProjectId, ProjectName},
@@ -7,7 +6,10 @@ use pwf_models::{
 use pwf_wire::note::{EditNote, MutatedNote};
 
 use crate::{
-    ports::project_note::{ProjectNotePatch, ProjectNotes},
+    ports::{
+        project_note::{ProjectNotePatch, ProjectNotes},
+        project_store::ProjectStore,
+    },
     project::{get_active_project, get_project::GetProjectError},
 };
 
@@ -34,9 +36,9 @@ pub enum EditNoteError {
 pub async fn execute(
     command: EditNote,
     store: &impl ProjectNotes,
-    pool: &sqlx::SqlitePool,
+    project_store: &impl ProjectStore,
 ) -> Result<MutatedNote, EditNoteError> {
-    let project = get_active_project::execute(command.project_id, pool).await?;
+    let project = get_active_project::execute(command.project_id, project_store).await?;
     let id =
         command
             .selector

@@ -27,10 +27,11 @@ cqrsy = { workspace = true }
 futures = { workspace = true }
 lazy-regex = { workspace = true }
 nutype = { workspace = true }
-sqlx = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+pwf-infra = { workspace = true }
+sqlx = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

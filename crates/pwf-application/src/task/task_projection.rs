@@ -3,7 +3,7 @@
 use pwf_models::{
     project::{ProjectName, ProjectSourceValue},
     task::{
-        EffortTier, EffortTierError, PriorityTier, PriorityTierError, TaskId, TaskPrompt,
+        EffortTier, EffortTierError, PriorityTier, PriorityTierError, TaskBody, TaskId,
         TaskTimestamp, TaskTitle, TaskTitleError,
     },
 };
@@ -12,15 +12,15 @@ use pwf_wire::task::{
     TaskLaunch, TaskRecord,
 };
 
-use super::content::is_placeholder_prompt;
+use super::content::is_placeholder_body;
 use crate::ports::task_vault::TaskSummaryRecord;
 
 /// Derives placeholder diagnostics.
 #[must_use]
-pub(in crate::task) fn derive_flags(prompt: &TaskPrompt) -> TaskLaunch {
+pub(in crate::task) fn derive_flags(body: &TaskBody) -> TaskLaunch {
     let mut issues = Vec::new();
-    if is_placeholder_prompt(prompt) {
-        issues.push(TaskIssue::PlaceholderPrompt);
+    if is_placeholder_body(body) {
+        issues.push(TaskIssue::PlaceholderBody);
     }
     TaskLaunch::from_issues(issues)
 }
@@ -57,8 +57,8 @@ pub(in crate::task) fn detailed(
     project: ProjectName,
     project_path: Option<&ProjectSourceValue>,
 ) -> Result<ListedTask, TaskProjectionError> {
-    let prompt = TaskPrompt::new(&task.body);
-    let flags = derive_flags(&prompt);
+    let body = TaskBody::new(&task.body);
+    let flags = derive_flags(&body);
     let heading = task_heading(&task.id, &task.title)?;
     let effort = task_effort(&task.id, task.effort.as_deref())?;
     let priority = task_priority(&task.id, task.priority.as_deref())?;
@@ -88,7 +88,7 @@ pub(in crate::task) fn detailed(
             created_at: task.created_at,
             completed_at: task.completed_at,
             commits: task.commits.clone(),
-            prompt,
+            body,
             project_path: project_path.cloned(),
             file_path: task.locator.clone(),
             launch: flags,
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn launchable_when_project_path_is_present_and_prompt_is_real() {
+    fn launchable_when_project_path_is_present_and_body_is_real() {
         let enriched = detailed(
             &record("add startup toggle"),
             ProjectName::try_new("foo").unwrap(),
@@ -192,7 +192,7 @@ mod tests {
         )
         .unwrap();
         assert!(enriched.details.as_ref().unwrap().launch.is_ready());
-        assert!(!enriched.details.as_ref().unwrap().launch.needs_prompt());
+        assert!(!enriched.details.as_ref().unwrap().launch.needs_body());
         assert!(
             enriched
                 .details
@@ -203,7 +203,7 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            enriched.details.as_ref().unwrap().prompt.as_ref(),
+            enriched.details.as_ref().unwrap().body.as_ref(),
             "add startup toggle"
         );
         assert_eq!(
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_prompt_is_not_launchable() {
+    fn placeholder_body_is_not_launchable() {
         let enriched = detailed(
             &record("TODO"),
             ProjectName::try_new("foo").unwrap(),
@@ -242,10 +242,10 @@ mod tests {
         )
         .unwrap();
         assert!(!enriched.details.as_ref().unwrap().launch.is_ready());
-        assert!(enriched.details.as_ref().unwrap().launch.needs_prompt());
+        assert!(enriched.details.as_ref().unwrap().launch.needs_body());
         assert_eq!(
             enriched.details.as_ref().unwrap().launch.issues(),
-            [TaskIssue::PlaceholderPrompt]
+            [TaskIssue::PlaceholderBody]
         );
     }
 

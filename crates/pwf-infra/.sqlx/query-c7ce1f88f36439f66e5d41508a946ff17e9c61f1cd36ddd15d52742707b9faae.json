@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                section AS \"section!\",\n                marker AS \"marker!\",\n                header AS \"header!\"\n            FROM task_marker_sections\n            ORDER BY CASE section\n                WHEN 'goals' THEN 0\n                WHEN 'context' THEN 1\n                WHEN 'constraints' THEN 2\n                WHEN 'done_when' THEN 3\n                ELSE 4\n            END\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "section!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task_marker_sections",
+            "name": "section"
+          }
+        }
+      },
+      {
+        "name": "marker!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task_marker_sections",
+            "name": "marker"
+          }
+        }
+      },
+      {
+        "name": "header!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task_marker_sections",
+            "name": "header"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c7ce1f88f36439f66e5d41508a946ff17e9c61f1cd36ddd15d52742707b9faae"
+}
