@@ -13,7 +13,7 @@ use pwf_wire::{
 use super::SqliteProjectStore;
 
 fn home() -> HomeDirectory {
-    HomeDirectory::new(std::env::temp_dir())
+    HomeDirectory::new(std::env::temp_dir().join("pwf-project-store-home"))
 }
 fn id(raw: &str) -> ProjectId {
     raw.parse().unwrap()

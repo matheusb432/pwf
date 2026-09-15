@@ -30,7 +30,8 @@ nutype = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-pwf-infra = { workspace = true }
+# Keep the test adapter local so packaged crates do not contain a dependency cycle.
+pwf-infra = { path = "../pwf-infra" }
 sqlx = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 

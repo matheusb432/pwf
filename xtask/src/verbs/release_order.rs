@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Context as _, Result, ensure};
-use cargo_metadata::{MetadataCommand, Package};
+use cargo_metadata::{DependencyKind, MetadataCommand, Package};
 
 use crate::paths;
 
@@ -38,7 +38,7 @@ pub(crate) fn run() -> Result<()> {
             application.version
         );
         for dependency in &package.dependencies {
-            if dependency.path.is_some() {
+            if dependency.path.is_some() && dependency.kind != DependencyKind::Development {
                 ensure!(
                     names.contains(dependency.name.as_str()),
                     "{} depends on unpublished {}",
@@ -75,6 +75,8 @@ pub(crate) fn run() -> Result<()> {
 
 fn ready(package: &Package, names: &BTreeSet<&str>, published: &BTreeSet<&str>) -> bool {
     package.dependencies.iter().all(|dependency| {
-        !names.contains(dependency.name.as_str()) || published.contains(dependency.name.as_str())
+        dependency.kind == DependencyKind::Development
+            || !names.contains(dependency.name.as_str())
+            || published.contains(dependency.name.as_str())
     })
 }

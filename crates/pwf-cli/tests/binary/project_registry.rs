@@ -330,10 +330,14 @@ fn add_vault_uses_current_directory_and_source_less_projects_support_tasks() {
     let listed = fixture
         .command_args(&["task", "list", "--project", "foo", "--long=rich"])
         .success_stdout();
-    assert!(listed.contains(&format!(
-        "Path      {}",
-        vault.join("tasks/foo/FOO-0001.md").display()
-    )));
+    let listed_path = listed
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("Path      "))
+        .unwrap();
+    assert_eq!(
+        std::fs::canonicalize(listed_path).unwrap(),
+        vault.join("tasks/foo/FOO-0001.md").canonicalize().unwrap()
+    );
     assert!(listed.contains("## Goals\n\n- verify a vault project"));
     assert_failure(
         fixture
