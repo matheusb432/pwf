@@ -238,8 +238,10 @@ fn note_content(project: &str, note: &NewProjectNote) -> String {
         let _ = writeln!(source, "verified: {}", yaml_string(verified.as_ref()));
     }
     source.push_str("---\n\n");
-    let _ = writeln!(source, "# {}\n", note.title);
-    let _ = writeln!(source, "{}", note.content);
+    let _ = writeln!(source, "# {}", note.title);
+    if let Some(content) = &note.content {
+        let _ = writeln!(source, "\n{content}");
+    }
     if !note.sources.is_empty() {
         source.push_str("\n## Sources\n\n");
         for evidence in &note.sources {
@@ -647,7 +649,7 @@ mod tests {
         NewProjectNote {
             id: identifier(number),
             title: NoteTitle::try_new(title).unwrap(),
-            content: NoteContent::try_new("A CLI flag needs a binary test only for an owned contract.\n\n- Preserve the process boundary.").unwrap(),
+            content: Some(NoteContent::try_new("A CLI flag needs a binary test only for an owned contract.\n\n- Preserve the process boundary.").unwrap()),
             domain: Some(NoteDomain::try_new("testing").unwrap()),
             tags: vec![
                 NoteTag::try_new("cli").unwrap(),
@@ -702,6 +704,32 @@ mod tests {
         assert_eq!(
             ProjectNotes::list_notes(&store, &project(&tasks_path)).unwrap(),
             vec![inserted]
+        );
+    }
+
+    #[test]
+    fn insert_title_only_note_omits_body_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = store(directory.path());
+        let mut note = new_note(1, "title only");
+        note.content = None;
+        note.domain = None;
+        note.tags.clear();
+        note.sources.clear();
+        note.verified = None;
+
+        ProjectNotes::insert_note(&store, &project(directory.path()), note).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(directory.path().join("FOO-NOTE-0001.md")).unwrap(),
+            concat!(
+                "---\n",
+                "type: note\n",
+                "project: \"foo\"\n",
+                "created: 2026-07-26\n",
+                "---\n\n",
+                "# title only\n",
+            )
         );
     }
 

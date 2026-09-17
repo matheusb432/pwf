@@ -209,6 +209,7 @@ message UpdateProjectResponse {}
 message AddNoteRequest {
   string project_id = 1;
   string title = 2;
+  // Empty creates a title-only note; a nonempty value supplies its Markdown body.
   string content = 3;
   optional string domain = 4;
   repeated string tags = 5;

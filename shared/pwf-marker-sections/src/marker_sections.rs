@@ -71,6 +71,7 @@ pub fn parse<const N: usize>(
     let mut parsed = ParsedMarkerSections {
         title: String::new(),
         section_items: MarkerSectionConfiguration::<N>::empty_section_items(),
+        section_presence: [false; N],
     };
     let mut current_section = 0;
     let mut text_start = None;
@@ -104,6 +105,7 @@ pub fn parse<const N: usize>(
                     &mut seen_marker,
                 );
                 current_section = section_index;
+                parsed.section_presence[section_index] = true;
             }
         }
     }

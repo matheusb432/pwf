@@ -15,9 +15,6 @@ impl<'configuration, const N: usize> MarkdownAdapter<'configuration, N> {
 
 impl<const N: usize> Adapter<N> for MarkdownAdapter<'_, N> {
     fn render(&self, parsed: &ParsedMarkerSections<N>) -> String {
-        if parsed.section_items().iter().all(Vec::is_empty) {
-            return render_empty_sections(self.configuration);
-        }
         let capacity = rendered_length(self.configuration, parsed);
         let mut output = String::with_capacity(capacity);
         for (index, (section, items)) in self
@@ -26,21 +23,14 @@ impl<const N: usize> Adapter<N> for MarkdownAdapter<'_, N> {
             .iter()
             .zip(parsed.section_items())
             .enumerate()
-            .filter(|(index, (_, items))| *index == 0 || !items.is_empty())
+            .filter(|(index, (_, items))| {
+                *index == 0 || parsed.section_presence[*index] || !items.is_empty()
+            })
         {
             append_section(&mut output, index, section.header(), items);
         }
         output
     }
-}
-
-fn render_empty_sections<const N: usize>(configuration: &MarkerSectionConfiguration<N>) -> String {
-    let header = configuration.sections()[0].header();
-    let mut output = String::with_capacity("## ".len() + header.len() + 1);
-    output.push_str("## ");
-    output.push_str(header);
-    output.push('\n');
-    output
 }
 
 fn append_section(output: &mut String, index: usize, header: &str, items: &[String]) {
@@ -65,7 +55,9 @@ fn rendered_length<const N: usize>(
         .iter()
         .zip(parsed.section_items())
         .enumerate()
-        .filter(|(index, (_, items))| *index == 0 || !items.is_empty())
+        .filter(|(index, (_, items))| {
+            *index == 0 || parsed.section_presence[*index] || !items.is_empty()
+        })
         .map(|(index, (section, items))| {
             let section_separator = usize::from(index != 0) * 2;
             section_separator

@@ -41,7 +41,7 @@ pub(crate) enum Command {
     /// List a project's notes
     #[command(alias = "ls")]
     List(ListArguments),
-    /// Add a study note from `<title> / <content>` or explicit fields
+    /// Add a study note from a title, with optional ` / <content>` or explicit fields
     Add(Box<AddArguments>),
     /// Delete a project note
     Remove(RemoveArguments),
@@ -64,7 +64,7 @@ pub(crate) struct AddArguments {
     /// Managed project ID (two to four ASCII letters)
     #[arg(value_name = "PROJECT", value_parser = crate::project::parse_project_id)]
     project: ProjectId,
-    /// Title and Markdown content separated by ` / `
+    /// Title, optionally followed by Markdown content separated by ` / `
     #[arg(value_name = "NOTE", required_unless_present = "structured_note")]
     note: Option<PositionalNote>,
     #[command(flatten)]
@@ -87,13 +87,13 @@ pub(crate) struct AddArguments {
 }
 
 #[derive(Args, Debug)]
-#[group(id = "structured_note", requires_all = ["title", "content"], conflicts_with = "note")]
+#[group(id = "structured_note", conflicts_with = "note")]
 struct StructuredNote {
     /// Note title
     #[arg(long)]
     title: Option<NoteTitle>,
     /// Markdown note content
-    #[arg(long)]
+    #[arg(long, requires = "title")]
     content: Option<NoteContent>,
 }
 
@@ -185,19 +185,22 @@ struct VerificationEdits {
 #[derive(Clone, Debug)]
 pub(crate) struct PositionalNote {
     title: NoteTitle,
-    content: NoteContent,
+    content: Option<NoteContent>,
 }
 
 impl FromStr for PositionalNote {
     type Err = String;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        let (title, content) = raw.split_once(" / ").ok_or_else(|| {
-            "Positional note must contain ' / ' between its title and content.".to_string()
-        })?;
+        let (title, content) = raw
+            .split_once(" / ")
+            .map_or((raw, None), |(title, content)| (title, Some(content)));
         Ok(Self {
             title: NoteTitle::try_new(title).map_err(|error| error.to_string())?,
-            content: NoteContent::try_new(content).map_err(|error| error.to_string())?,
+            content: content
+                .map(NoteContent::try_new)
+                .transpose()
+                .map_err(|error| error.to_string())?,
         })
     }
 }
@@ -253,10 +256,10 @@ async fn add(
         &arguments.structured.content,
     ) {
         (Some(note), None, None) => (note.title.clone(), note.content.clone()),
-        (None, Some(title), Some(content)) => (title.clone(), content.clone()),
+        (None, Some(title), content) => (title.clone(), content.clone()),
         _ => {
             return Err(anyhow::anyhow!(
-                "Provide either '<title> / <content>' or both --title and --content."
+                "Provide either '<title> [ / <content>]' or --title [--content <content>]."
             )
             .into());
         }
@@ -267,7 +270,7 @@ async fn add(
                 .await?
                 .to_string(),
             title: title.to_string(),
-            content: content.to_string(),
+            content: content.map_or_else(String::new, |content| content.to_string()),
             domain: arguments.domain.as_ref().map(ToString::to_string),
             tags: arguments.tags.iter().map(ToString::to_string).collect(),
             sources: arguments.sources.iter().map(ToString::to_string).collect(),
@@ -553,9 +556,24 @@ mod tests {
 
         assert_eq!(note.title.as_ref(), "using join");
         assert_eq!(
-            note.content.as_ref(),
-            "preserve docs/async.md / and later separators"
+            note.content.as_ref().map(AsRef::as_ref),
+            Some("preserve docs/async.md / and later separators")
         );
-        assert!("title/content".parse::<PositionalNote>().is_err());
+        assert_eq!(
+            "title/content"
+                .parse::<PositionalNote>()
+                .unwrap()
+                .title
+                .as_ref(),
+            "title/content"
+        );
+    }
+
+    #[test]
+    fn positional_note_accepts_a_title_without_content() {
+        let note = "title without content".parse::<PositionalNote>().unwrap();
+
+        assert_eq!(note.title.as_ref(), "title without content");
+        assert!(note.content.is_none());
     }
 }

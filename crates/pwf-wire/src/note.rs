@@ -18,8 +18,8 @@ pub struct AddNote {
     pub project_id: ProjectId,
     /// Names the note.
     pub title: NoteTitle,
-    /// Supplies the note's Markdown body.
-    pub content: NoteContent,
+    /// Supplies the note's Markdown body when present.
+    pub content: Option<NoteContent>,
     /// Classifies the subject when known.
     pub domain: Option<NoteDomain>,
     /// Supplies discovery labels.

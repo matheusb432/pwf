@@ -106,6 +106,25 @@ fn machine_add_maps_each_explicit_value_without_parsing_marker_sections() {
 }
 
 #[test]
+fn shorthand_add_preserves_explicit_empty_marker_sections() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+
+    fixture
+        .database
+        .command()
+        .args(["add", "foo", "my task /c some context /d /c"])
+        .assert()
+        .success()
+        .stderr("");
+
+    let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
+    assert_eq!(
+        task["body"],
+        "## Goals\n\n\n## Context\n\n- some context\n\n## Done When"
+    );
+}
+
+#[test]
 fn list_priority_filters_and_renders_the_selected_tier() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     for (title, priority) in [("low task", "low"), ("highest task", "highest")] {
@@ -509,7 +528,6 @@ fn invalid_argument_combinations_fail_before_mutation() {
             "docs",
             "--remove-domain",
         ],
-        vec!["note", "add", "foo", "--title", "missing content"],
         vec![
             "note",
             "add",

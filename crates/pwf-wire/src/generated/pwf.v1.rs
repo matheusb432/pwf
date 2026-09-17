@@ -272,6 +272,7 @@ pub struct AddNoteRequest {
     pub project_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub title: ::prost::alloc::string::String,
+    /// Empty creates a title-only note; a nonempty value supplies its Markdown body.
     #[prost(string, tag = "3")]
     pub content: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "4")]

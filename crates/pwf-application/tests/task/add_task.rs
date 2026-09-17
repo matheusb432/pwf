@@ -414,6 +414,43 @@ async fn seeded_configuration_preserves_the_current_markers_and_headers(pool: sq
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
+async fn shorthand_add_renders_explicit_empty_sections_once(pool: sqlx::SqlitePool) {
+    let store = registered_store(&pool).await;
+    let mut empty_context = command();
+    empty_context.body = AddTaskBody::from_shorthand("empty context /c");
+
+    add_task::execute(
+        empty_context,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
+
+    let mut repeated_context = command();
+    repeated_context.body = AddTaskBody::from_shorthand("my task /c some context /d /c");
+
+    add_task::execute(
+        repeated_context,
+        &store,
+        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
+        &FixedClock,
+        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+    )
+    .await
+    .unwrap();
+
+    let tasks = store.tasks("foo");
+    assert_eq!(tasks[0].body, "## Goals\n\n\n## Context\n");
+    assert_eq!(
+        tasks[1].body,
+        "## Goals\n\n\n## Context\n\n- some context\n\n## Done When\n"
+    );
+}
+
+#[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn missing_lane_rejects_creation(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     sqlx::query("DELETE FROM task_marker_sections WHERE section = 'constraints'")

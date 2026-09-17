@@ -49,25 +49,33 @@ fn note_list_colors_follow_verification_and_custom_settings() {
 }
 
 #[test]
-fn note_add_rejects_incomplete_or_mixed_input_modes() {
+fn note_add_accepts_title_only_inputs_and_rejects_mixed_modes() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo").unwrap();
 
-    let output = fixture
-        .database
-        .command()
-        .args(["note", "add", "foo", "missing separator"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.contains("Positional note must contain ' / ' between its title and content."),
-        "{stderr}"
-    );
     fixture
         .database
         .command()
-        .args(["note", "add", "foo", "--title", "missing content"])
+        .args(["note", "add", "foo", "positional title only"])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args(["note", "add", "foo", "--title", "structured title only"])
+        .assert()
+        .success();
+
+    let listed = fixture
+        .database
+        .command_args(&["note", "list", "foo"])
+        .success_stdout();
+    assert!(listed.contains("positional title only"), "{listed}");
+    assert!(listed.contains("structured title only"), "{listed}");
+
+    fixture
+        .database
+        .command()
+        .args(["note", "add", "foo", "--content", "missing title"])
         .assert()
         .failure();
     fixture

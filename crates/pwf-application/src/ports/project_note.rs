@@ -12,7 +12,7 @@ use pwf_wire::{collection_edit::CollectionEdit, patch_field::PatchField, set_fie
 pub struct NewProjectNote {
     pub id: NoteId,
     pub title: NoteTitle,
-    pub content: NoteContent,
+    pub content: Option<NoteContent>,
     pub domain: Option<NoteDomain>,
     pub tags: Vec<NoteTag>,
     pub sources: Vec<NoteSource>,

@@ -132,6 +132,26 @@ async fn body_replaces_title_and_every_marker_section(pool: sqlx::SqlitePool) {
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
+async fn body_replacement_omits_explicit_empty_sections(pool: sqlx::SqlitePool) {
+    register_project(&pool).await;
+    let store = staged(vec![record(
+        "FOO-0001",
+        TaskStatus::Active,
+        "## Goals\n\n- old",
+    )]);
+    let command = content_edit(
+        "FOO-0001",
+        EditTaskContent::replace_shorthand("New Title /c".into()),
+    );
+
+    run(command, &store, &pool).await.unwrap();
+
+    let edited = &store.tasks("foo-bar")[0];
+    assert_eq!(edited.title, "New Title");
+    assert_eq!(edited.body, "## Goals\n");
+}
+
+#[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn body_replacement_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
     sqlx::query(

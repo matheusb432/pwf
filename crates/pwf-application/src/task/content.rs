@@ -25,13 +25,41 @@ enum BodyClassification {
     Authored,
 }
 
+#[derive(Clone, Copy)]
+enum ExplicitEmptySections {
+    Render,
+    Omit,
+}
+
 #[must_use]
-pub(in crate::task) fn render(body: &str, sections: &TaskMarkerSections) -> String {
+pub(in crate::task) fn render_for_creation(body: &str, sections: &TaskMarkerSections) -> String {
+    render_shorthand(body, sections, ExplicitEmptySections::Render)
+}
+
+#[must_use]
+pub(in crate::task) fn render_for_replacement(body: &str, sections: &TaskMarkerSections) -> String {
+    render_shorthand(body, sections, ExplicitEmptySections::Omit)
+}
+
+fn render_shorthand(
+    body: &str,
+    sections: &TaskMarkerSections,
+    explicit_empty_sections: ExplicitEmptySections,
+) -> String {
     match body_classification(body) {
         BodyClassification::Placeholder | BodyClassification::AuthoredVerbatimLegacy => {
             body.to_string()
         }
-        BodyClassification::Authored => sections.render(&sections.parse(body.as_ref())),
+        BodyClassification::Authored => {
+            let parsed = sections.parse(body);
+            match explicit_empty_sections {
+                ExplicitEmptySections::Render => sections.render(&parsed),
+                ExplicitEmptySections::Omit => {
+                    let (title, section_items) = parsed.into_parts();
+                    sections.render(&ParsedMarkerSections::new(title, section_items))
+                }
+            }
+        }
     }
 }
 
@@ -383,7 +411,7 @@ mod tests {
     const S: &str = "\n\n";
 
     fn render(raw: &str) -> String {
-        super::render(raw, &TaskMarkerSections::default_fixture())
+        super::render_for_creation(raw, &TaskMarkerSections::default_fixture())
     }
 
     fn is_placeholder_body(raw: &str) -> bool {

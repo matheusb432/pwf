@@ -4,7 +4,9 @@ use std::{fmt::Display, num::NonZeroUsize, str::FromStr};
 
 use pwf_models::{
     AppDate,
-    note::{NoteDomain, NoteSelector, NoteSource, NoteTag, NoteTitle, NoteVerification},
+    note::{
+        NoteContent, NoteDomain, NoteSelector, NoteSource, NoteTag, NoteTitle, NoteVerification,
+    },
 };
 use tonic::Status;
 
@@ -15,7 +17,9 @@ pub fn add_note_request(request: pb::AddNoteRequest) -> Result<note::AddNote, St
     Ok(note::AddNote {
         project_id: parse("project_id", &request.project_id)?,
         title: parse("title", &request.title)?,
-        content: parse("content", &request.content)?,
+        content: (!request.content.is_empty())
+            .then(|| parse::<NoteContent>("content", &request.content))
+            .transpose()?,
         domain: request
             .domain
             .as_deref()
@@ -220,13 +224,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::update_note_request;
+    use super::{add_note_request, update_note_request};
     use crate::{
         collection_edit::CollectionEdit,
         patch_field::PatchField,
         pb::{
-            ClearField, StringCollectionEdit, StringPatchField, StringValues, UpdateNoteRequest,
-            string_collection_edit, string_patch_field,
+            AddNoteRequest, ClearField, StringCollectionEdit, StringPatchField, StringValues,
+            UpdateNoteRequest, string_collection_edit, string_patch_field,
         },
         set_field::SetField,
     };
@@ -278,6 +282,23 @@ mod tests {
             command.edits.verified(),
             PatchField::Set(value) if value.as_ref() == "2026-08-30"
         ));
+    }
+
+    #[test]
+    fn add_decodes_empty_content_as_absent_and_rejects_blank_content() {
+        let request = |content: &str| AddNoteRequest {
+            project_id: "foo".to_string(),
+            title: "title only".to_string(),
+            content: content.to_string(),
+            domain: None,
+            tags: Vec::new(),
+            sources: Vec::new(),
+            verified: None,
+            date: None,
+        };
+
+        assert!(add_note_request(request("")).unwrap().content.is_none());
+        assert!(add_note_request(request(" \n ")).is_err());
     }
 
     #[test]

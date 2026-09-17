@@ -4,7 +4,7 @@ use pwf_wire::task::{AddTask, AddTaskBody, TaskMutationResult, TaskMutationSumma
 use super::{
     TaskBodyTitleError,
     blocked_by::{self, BlockedByValidationError},
-    content::{render, render_marker_sections},
+    content::{render_for_creation, render_marker_sections},
     infer_task_title,
     marker_sections::TaskMarkerSectionsError,
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
@@ -83,7 +83,7 @@ pub async fn execute(
             let sections = marker_section_store.get_task_marker_sections().await?;
             (
                 infer_task_title(&body, &sections)?,
-                NewTaskBody::Rendered(render(&body, &sections)),
+                NewTaskBody::Rendered(render_for_creation(&body, &sections)),
             )
         }
         AddTaskBody::Structured { title, sections } => {

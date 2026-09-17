@@ -15,7 +15,7 @@ fn command(project_id: &str) -> AddNote {
     AddNote {
         project_id: project_id.parse().unwrap(),
         title: NoteTitle::try_new(" remember milk ").unwrap(),
-        content: NoteContent::try_new(" buy milk before the store closes ").unwrap(),
+        content: Some(NoteContent::try_new(" buy milk before the store closes ").unwrap()),
         domain: None,
         tags: Vec::new(),
         sources: Vec::new(),

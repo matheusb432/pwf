@@ -16,7 +16,10 @@ use super::{
     TaskBodyTitleError,
     blocked_by::{self, BlockedByValidationError},
     commit_task_writes,
-    content::{EditMarkerSectionsError, append_marker_sections, edit_marker_sections, render},
+    content::{
+        EditMarkerSectionsError, append_marker_sections, edit_marker_sections,
+        render_for_replacement,
+    },
     ensure_task_revision, expected_task_revision, infer_task_title,
     marker_sections::{TaskMarkerSections, TaskMarkerSectionsError},
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
@@ -212,7 +215,7 @@ fn prepare_content(
         EditTaskContentKind::ReplaceShorthand { body } => {
             let title = infer_task_title(body, marker_sections)?;
             Ok((
-                SetField::Set(render(body, marker_sections)),
+                SetField::Set(render_for_replacement(body, marker_sections)),
                 SetField::Set(title),
             ))
         }
