@@ -32,7 +32,7 @@ pub struct Arguments {
     #[arg(long, visible_alias = "dry")]
     pub(crate) dry_run: bool,
     /// Which agent to dispatch
-    #[arg(long = "agent", value_enum, default_value_t = AgentChoice::default())]
+    #[arg(short = 'a', long, value_enum, default_value_t = AgentChoice::default())]
     pub(crate) agent: AgentChoice,
     /// Prefix text pushed to the agent prompt
     #[arg(short = 'p', long = "push-prompt", value_name = "TEXT")]
@@ -40,10 +40,10 @@ pub struct Arguments {
     /// Model override forwarded to the selected agent
     ///
     /// Use `default` or omit the flag to let the provider choose its default model
-    #[arg(long, short = 'm')]
+    #[arg(short = 'm', long)]
     pub(crate) model: Option<String>,
     /// Reasoning effort for the dispatched agent session
-    #[arg(long, value_enum, default_value_t = SessionEffortChoice::default())]
+    #[arg(short = 'e', long, value_enum, default_value_t = SessionEffortChoice::default())]
     pub(crate) effort: SessionEffortChoice,
 }
 
