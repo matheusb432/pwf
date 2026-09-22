@@ -1,7 +1,4 @@
-use pwf_models::{
-    project::Project,
-    task::{BlockedBy, TaskId, TaskTags, TaskTitle, TaskTitleError},
-};
+use pwf_models::task::{BlockedBy, TaskId, TaskTags, TaskTitle, TaskTitleError};
 use pwf_wire::{
     collection_edit::CollectionEdit,
     patch_field::PatchField,
@@ -29,17 +26,8 @@ use super::{
 use crate::ports::{
     project_store::ProjectStore,
     task_marker_section_store::TaskMarkerSectionStore,
-    task_vault::{
-        ExpectedTaskRevision, NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite,
-    },
+    task_vault::{NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite},
 };
-
-struct PreparedTaskEdit {
-    project: Project,
-    id: TaskId,
-    patch: TaskPatch,
-    expected: ExpectedTaskRevision,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum EditTaskError {
@@ -138,23 +126,39 @@ pub async fn execute(
         blocked_by::validate(&command.id, blockers, supplied, &dependencies)
             .map_err(map_blocked_by_error)?;
     }
-    let content_patch = match command.edits.content() {
+    let (body, title) = match command.edits.content() {
         SetField::Set(content) => {
             let marker_sections = marker_section_store.get_task_marker_sections().await?;
             prepare_content(content, &record, &marker_sections)?
         }
         SetField::NoAction => (SetField::NoAction, SetField::NoAction),
     };
-    let prepared = prepare(command, project, &record, blocked_by, content_patch)?;
+    let patch = TaskPatch {
+        body,
+        title,
+        blocked_by,
+        effort: resolve_value(command.edits.effort()),
+        priority: resolve_value(command.edits.priority()),
+        tags: resolve_tags(command.edits.tags(), &command.id, &record)?,
+        ..TaskPatch::default()
+    };
     let summary = TaskMutationSummary {
-        id: prepared.id.clone(),
-        title: match prepared.patch.title.as_ref() {
+        id: command.id.clone(),
+        title: match patch.title.as_ref() {
             SetField::NoAction => record.title.clone(),
             SetField::Set(title) => title.to_string(),
         },
         status: record.status,
     };
-    persist(prepared, store)?;
+    commit_task_writes(
+        store,
+        &project,
+        vec![expected_task_revision(&record)],
+        vec![TaskWrite::Patch {
+            id: command.id,
+            patch,
+        }],
+    )?;
     Ok(TaskMutationResult {
         outcome: (),
         task: Some(summary),
@@ -168,31 +172,6 @@ fn map_project_error(error: ResolveTaskProjectError, id: &TaskId) -> EditTaskErr
         }
         ResolveTaskProjectError::QueryProject(source) => EditTaskError::QueryProject(source),
     }
-}
-
-fn prepare(
-    command: EditTask,
-    project: Project,
-    record: &TaskRecord,
-    blocked_by: NullablePatch<BlockedBy>,
-    content_patch: (SetField<String>, SetField<TaskTitle>),
-) -> Result<PreparedTaskEdit, EditTaskError> {
-    let (body, title) = content_patch;
-    let patch = TaskPatch {
-        body,
-        title,
-        blocked_by,
-        effort: resolve_value(command.edits.effort()),
-        priority: resolve_value(command.edits.priority()),
-        tags: resolve_tags(command.edits.tags(), &command.id, record)?,
-        ..TaskPatch::default()
-    };
-    Ok(PreparedTaskEdit {
-        project,
-        id: command.id,
-        patch,
-        expected: expected_task_revision(record),
-    })
 }
 
 fn prepare_content(
@@ -226,25 +205,20 @@ fn resolve_blocked_by(
     edit: &CollectionEdit<BlockedBy>,
     record: &TaskRecord,
 ) -> Result<NullablePatch<BlockedBy>, EditTaskError> {
-    let existing = match &record.blocked_by {
-        StoredBlockedBy::Absent => None,
-        StoredBlockedBy::Valid(blocked_by) => Some(blocked_by),
-        StoredBlockedBy::Malformed { raw, reason } => {
-            return Err(EditTaskError::MalformedBlockedBy {
+    match edit {
+        CollectionEdit::Unchanged => Ok(NullablePatch::Unchanged),
+        CollectionEdit::Clear => Ok(NullablePatch::Clear),
+        CollectionEdit::Replace(added) => Ok(NullablePatch::Set(added.clone())),
+        CollectionEdit::Append(added) => match &record.blocked_by {
+            StoredBlockedBy::Absent => Ok(NullablePatch::Set(added.clone())),
+            StoredBlockedBy::Valid(existing) => Ok(NullablePatch::Set(existing.merge(added))),
+            StoredBlockedBy::Malformed { raw, reason } => Err(EditTaskError::MalformedBlockedBy {
                 id: record.id.clone(),
                 path: Box::new(record.locator.clone()),
                 raw: raw.clone().into_boxed_str(),
                 reason: reason.clone().into_boxed_str(),
-            });
-        }
-    };
-    match edit {
-        CollectionEdit::Unchanged => Ok(NullablePatch::Unchanged),
-        CollectionEdit::Clear => Ok(NullablePatch::Clear),
-        CollectionEdit::Append(added) => Ok(NullablePatch::Set(
-            existing.map_or_else(|| added.clone(), |existing| existing.merge(added)),
-        )),
-        CollectionEdit::Replace(added) => Ok(NullablePatch::Set(added.clone())),
+            }),
+        },
     }
 }
 
@@ -309,19 +283,6 @@ fn merge_appended_tags(
             }
         })?;
     Ok(existing.merge(appended))
-}
-
-fn persist(prepared: PreparedTaskEdit, store: &impl TaskVault) -> Result<(), EditTaskError> {
-    commit_task_writes(
-        store,
-        &prepared.project,
-        vec![prepared.expected],
-        vec![TaskWrite::Patch {
-            id: prepared.id,
-            patch: prepared.patch,
-        }],
-    )
-    .map_err(Into::into)
 }
 
 fn map_marker_section_error(error: EditMarkerSectionsError) -> EditTaskError {

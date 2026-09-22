@@ -87,6 +87,8 @@ pub enum InMemoryStoreError {
     TaskAlreadyExists { id: TaskId },
     #[error("task {id} does not exist")]
     TaskNotFound { id: TaskId },
+    #[error("Task id is ambiguous: {id}")]
+    AmbiguousTaskId { id: TaskId },
 }
 
 impl InMemoryStore {
@@ -273,11 +275,18 @@ impl TaskVault for InMemoryStore {
                 operation: "task-read",
             });
         }
-        Ok(self
-            .lock()
+        let state = self.lock();
+        let mut matches = state
             .tasks
             .get(&project.title)
-            .and_then(|tasks| tasks.iter().find(|task| task.id == *id).cloned()))
+            .into_iter()
+            .flatten()
+            .filter(|task| task.id == *id);
+        let record = matches.next().cloned();
+        if matches.next().is_some() {
+            return Err(InMemoryStoreError::AmbiguousTaskId { id: id.clone() });
+        }
+        Ok(record)
     }
 
     fn list_task_dependencies(

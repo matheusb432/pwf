@@ -345,6 +345,7 @@ pub trait TaskVault: Send + Sync + 'static {
         project: &Project,
     ) -> Result<pwf_wire::confirmation::TaskDeletion, Self::Error>;
 
+    /// Reads one task, rejecting ambiguous persisted identities.
     fn get_task_record(
         &self,
         project: &Project,

@@ -124,7 +124,9 @@ async fn planning_uses_one_compound_identity_and_keeps_task_body_order(
         source: "second task content".to_string(),
         ..task_record("FOO-0002")
     };
-    let store = InMemoryStore::default().with_project("foo", vec![first, second]);
+    let store = InMemoryStore::default()
+        .with_project("foo", vec![first, second])
+        .with_failure(crate::support::InMemoryStoreFailure::ListTasks);
     let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
     let mut command = command(None);
     command.task_ids =

@@ -326,6 +326,61 @@ async fn replacing_malformed_tags_does_not_require_unrelated_metadata_to_parse(
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
+async fn malformed_dependencies_only_prevent_appending_to_them(pool: sqlx::SqlitePool) {
+    register_project(&pool).await;
+    let malformed = pwf_wire::task::StoredBlockedBy::Malformed {
+        raw: "broken links".into(),
+        reason: "expected a sequence".into(),
+    };
+    let blockers = crate::support::blocked_by(&["FOO-0002"]);
+    for (dependency_edit, expected) in [
+        (CollectionEdit::Unchanged, malformed.clone()),
+        (
+            CollectionEdit::Clear,
+            pwf_wire::task::StoredBlockedBy::Absent,
+        ),
+        (
+            CollectionEdit::Replace(blockers.clone()),
+            stored_blocked_by(&["FOO-0002"]),
+        ),
+        (CollectionEdit::Append(blockers), malformed.clone()),
+    ] {
+        let appends = matches!(dependency_edit, CollectionEdit::Append(_));
+        let store = staged(vec![
+            TaskRecord {
+                blocked_by: malformed.clone(),
+                ..task_record("FOO-0001")
+            },
+            task_record("FOO-0002"),
+        ]);
+        let command = edit(
+            "FOO-0001",
+            SetField::Set(
+                EditTaskContent::structured(
+                    SetField::Set(title("repaired")),
+                    TaskMarkerSectionEdits::default(),
+                )
+                .unwrap(),
+            ),
+            dependency_edit,
+            PatchField::NoAction,
+            CollectionEdit::Unchanged,
+        );
+        let result = run(command, &store, &pool).await;
+        if appends {
+            assert!(matches!(
+                result,
+                Err(EditTaskError::MalformedBlockedBy { .. })
+            ));
+        } else {
+            result.unwrap();
+            assert_eq!(store.tasks("foo-bar")[0].title, "repaired");
+        }
+        assert_eq!(store.tasks("foo-bar")[0].blocked_by, expected);
+    }
+}
+
+#[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn remove_then_add_replaces_tags_blocked_by_and_effort(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
     let target = TaskRecord {

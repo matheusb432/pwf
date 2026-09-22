@@ -21,7 +21,7 @@ use crate::{
         task_vault::TaskVault,
     },
     project::{get_projects, runtime_path},
-    task::{active_task, blocked_by},
+    task::{blocked_by, resolve_task_project, task_projection},
 };
 
 #[derive(Debug, Error)]
@@ -193,37 +193,48 @@ async fn plan_task(
     store: &impl TaskVault,
     project_store: &impl ProjectStore,
 ) -> Result<(Project, PlannedTask, Vec<SessionWarning>), PlanSessionError> {
-    let found = active_task::find(task_id, store, project_store)
+    let (project, record, heading) = find_active_task(task_id, store, project_store)
         .await
-        .map_err(|error| PlanSessionError::FindTask(anyhow::Error::new(error)))?;
-    let launch = crate::task::task_projection::derive_flags(&pwf_models::task::TaskBody::new(
-        found.record.body.trim(),
-    ));
+        .map_err(PlanSessionError::FindTask)?;
+    let launch =
+        task_projection::derive_flags(&pwf_models::task::TaskBody::new(record.body.trim()));
     if !launch.is_ready() {
         return Err(PlanSessionError::NotLaunchable {
             id: task_id.clone(),
             launch,
         });
     }
-    let warnings = blocker_warnings(&found.record, store, project_store).await;
-    let content = found.record.source.clone();
+    let warnings = blocker_warnings(&record, store, project_store).await;
     let revision = PreparedTaskRevision {
-        task_id: found.record.id.clone(),
-        revision: found.record.revision.clone(),
+        task_id: record.id,
+        revision: record.revision,
     };
     Ok((
-        found.project,
+        project,
         PlannedTask {
-            heading: found.heading,
-            created: found
-                .record
-                .created_at
-                .map(pwf_models::task::TaskTimestamp::date),
-            content,
+            heading,
+            created: record.created_at.map(pwf_models::task::TaskTimestamp::date),
+            content: record.source,
             revision,
         },
         warnings,
     ))
+}
+
+async fn find_active_task(
+    task_id: &TaskId,
+    store: &impl TaskVault,
+    project_store: &impl ProjectStore,
+) -> anyhow::Result<(Project, TaskRecord, TaskHeading)> {
+    let project = resolve_task_project::execute(task_id.clone(), project_store).await?;
+    let record = store
+        .get_task_record(&project, task_id)?
+        .filter(|record| record.status == pwf_models::task::TaskStatus::Active)
+        .ok_or_else(|| anyhow::anyhow!("Active task not found: {task_id}"))?;
+    let heading = task_projection::task_heading(&record.id, &record.title)?;
+    task_projection::task_effort(&record.id, record.effort.as_deref())?;
+    task_projection::task_priority(&record.id, record.priority.as_deref())?;
+    Ok((project, record, heading))
 }
 
 async fn blocker_warnings(
