@@ -33,6 +33,10 @@ harness = false
 name = "task_creation"
 harness = false
 
+[[bench]]
+name = "project_store"
+harness = false
+
 [dependencies]
 anyhow = { workspace = true }
 atomic-write-file = { workspace = true }

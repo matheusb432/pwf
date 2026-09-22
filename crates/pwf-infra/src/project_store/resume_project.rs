@@ -44,7 +44,7 @@ pub(super) async fn execute(
     })
     .collect::<Result<Vec<_>, ResumeProjectError>>()?;
     task_location::reject_collision(&project_id, &candidate_path, existing, home)?;
-    let update = sqlx::query!(
+    let mut rows = project_returning!(
         r#"
         UPDATE projects
         SET paused_at = NULL
@@ -52,16 +52,38 @@ pub(super) async fn execute(
         "#,
         id,
     )
-    .execute(&mut *transaction)
+    .fetch_all(&mut *transaction)
     .await
     .map_err(|error| unexpected("resuming project", error))?;
-    let row = project_query!("WHERE projects.id = ?", id)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(|error| unexpected("reading resumed project", error))?
-        .ok_or(ResumeProjectError::ProjectNotFound {
-            id: project_id.clone(),
-        })?;
+    let (row, changed) = match rows.len() {
+        0 => {
+            let row = project_query!("WHERE projects.id = ?", id)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(|error| unexpected("reading resumed project", error))?
+                .ok_or(ResumeProjectError::ProjectNotFound {
+                    id: project_id.clone(),
+                })?;
+            (row, false)
+        }
+        1 => {
+            let row = rows.pop().ok_or_else(|| {
+                unexpected(
+                    "resuming project",
+                    std::io::Error::other("project resume returned no row"),
+                )
+            })?;
+            (row, true)
+        }
+        count => {
+            return Err(unexpected(
+                "resuming project",
+                std::io::Error::other(format!(
+                    "project resume returned {count} rows; expected at most one"
+                )),
+            ));
+        }
+    };
     let project = super::project_from_row(row)
         .map_err(|error| unexpected("converting resumed project", error))?;
     transaction
@@ -69,10 +91,7 @@ pub(super) async fn execute(
         .await
         .map_err(|error| unexpected("committing project resume", error))?;
 
-    Ok(ProjectStateChange {
-        project,
-        changed: update.rows_affected() == 1,
-    })
+    Ok(ProjectStateChange { project, changed })
 }
 
 fn unexpected(

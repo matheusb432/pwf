@@ -17,7 +17,6 @@ pub(super) async fn execute(
         .await
         .map_err(|error| unexpected("starting project rename transaction", error))?;
     validate_identity(&mut transaction, &command, expected_current).await?;
-    let destination_id = command.fields.id.as_ref();
     let existing = other_task_locations(&mut transaction, &command.current_id).await?;
     task_location::reject_collision(
         &command.fields.id,
@@ -33,12 +32,7 @@ pub(super) async fn execute(
         ),
         None => None,
     };
-    replace_project_row(&mut transaction, &command, source_id).await?;
-
-    let row = project_query!("WHERE projects.id = ?", destination_id)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(|error| unexpected("reading renamed project", error))?;
+    let row = replace_project_row(&mut transaction, &command, source_id).await?;
     let project = super::project_from_row(row)
         .map_err(|error| unexpected("converting renamed project", error))?;
     transaction
@@ -52,14 +46,14 @@ async fn replace_project_row(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     command: &RenameProject,
     source_id: Option<i64>,
-) -> Result<(), RenameProjectError> {
+) -> Result<super::ProjectRow, RenameProjectError> {
     let current_id = command.current_id.as_ref();
     let destination_id = command.fields.id.as_ref();
     let destination_title = command.fields.title.as_ref();
     let tasks_kind = command.fields.tasks.kind().to_string();
     let tasks_path = command.fields.tasks.path().as_ref();
     let obsidian_vault = command.fields.obsidian_vault.as_ref().map(AsRef::as_ref);
-    let update = sqlx::query!(
+    let rows = project_returning!(
         r#"
         UPDATE projects
         SET
@@ -79,11 +73,16 @@ async fn replace_project_row(
         obsidian_vault,
         current_id,
     )
-    .execute(&mut **transaction)
+    .fetch_all(&mut **transaction)
     .await
     .map_err(|error| unexpected("updating project", error))?;
-    match update.rows_affected() {
-        1 => Ok(()),
+    match rows.len() {
+        1 => rows.into_iter().next().ok_or_else(|| {
+            unexpected(
+                "updating project",
+                std::io::Error::other("project rename returned no row"),
+            )
+        }),
         0 => Err(RenameProjectError::SourceProjectNotFound {
             id: command.current_id.clone(),
         }),

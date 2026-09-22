@@ -32,7 +32,7 @@ pub(super) async fn execute(
     let tasks_path = fields.tasks.path().as_ref();
     let obsidian_vault = fields.obsidian_vault.as_ref().map(AsRef::as_ref);
     let snapshot_enabled = fields.snapshot_enabled;
-    let insert_result = sqlx::query!(
+    let inserted_rows = project_returning!(
         r#"
         INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, obsidian_vault, snapshot_enabled)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -45,16 +45,20 @@ pub(super) async fn execute(
         obsidian_vault,
         snapshot_enabled,
     )
-    .execute(&mut *transaction)
+    .fetch_all(&mut *transaction)
     .await;
-    if let Err(error) = insert_result {
-        return Err(project_insertion_error(&mut transaction, &fields, error).await);
-    }
-
-    let row = project_query!("WHERE projects.id = ?", id)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(|error| unexpected("reading created project", error))?;
+    let mut inserted_rows = match inserted_rows {
+        Ok(rows) => rows,
+        Err(error) => {
+            return Err(project_insertion_error(&mut transaction, &fields, error).await);
+        }
+    };
+    let row = inserted_rows.pop().ok_or_else(|| {
+        unexpected(
+            "inserting project",
+            std::io::Error::other("project insert returned no row"),
+        )
+    })?;
     let project = super::project_from_row(row)
         .map_err(|error| unexpected("converting created project", error))?;
     transaction

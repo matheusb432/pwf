@@ -13,7 +13,7 @@ pub(super) async fn execute(
         .await
         .map_err(|error| unexpected("starting project pause transaction", error))?;
     let id = project_id.as_ref();
-    let update = sqlx::query!(
+    let mut rows = project_returning!(
         r#"
         UPDATE projects
         SET paused_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -21,14 +21,36 @@ pub(super) async fn execute(
         "#,
         id,
     )
-    .execute(&mut *transaction)
+    .fetch_all(&mut *transaction)
     .await
     .map_err(|error| unexpected("pausing project", error))?;
-    let row = project_query!("WHERE projects.id = ?", id)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(|error| unexpected("reading paused project", error))?
-        .ok_or(PauseProjectError::ProjectNotFound { id: project_id })?;
+    let (row, changed) = match rows.len() {
+        0 => {
+            let row = project_query!("WHERE projects.id = ?", id)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(|error| unexpected("reading paused project", error))?
+                .ok_or(PauseProjectError::ProjectNotFound { id: project_id })?;
+            (row, false)
+        }
+        1 => {
+            let row = rows.pop().ok_or_else(|| {
+                unexpected(
+                    "pausing project",
+                    std::io::Error::other("project pause returned no row"),
+                )
+            })?;
+            (row, true)
+        }
+        count => {
+            return Err(unexpected(
+                "pausing project",
+                std::io::Error::other(format!(
+                    "project pause returned {count} rows; expected at most one"
+                )),
+            ));
+        }
+    };
     let project = super::project_from_row(row)
         .map_err(|error| unexpected("converting paused project", error))?;
     transaction
@@ -36,10 +58,7 @@ pub(super) async fn execute(
         .await
         .map_err(|error| unexpected("committing project pause", error))?;
 
-    Ok(ProjectStateChange {
-        project,
-        changed: update.rows_affected() == 1,
-    })
+    Ok(ProjectStateChange { project, changed })
 }
 
 fn unexpected(

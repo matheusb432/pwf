@@ -51,6 +51,36 @@ macro_rules! project_query {
     };
 }
 
+macro_rules! project_returning {
+    ($statement:literal $(, $argument:expr)* $(,)?) => {
+        ::sqlx::query_as!(
+            $crate::project_store::ProjectRow,
+            $statement + r#"
+            RETURNING
+                id AS "id!",
+                title AS "title!",
+                (
+                    SELECT kind
+                    FROM project_sources
+                    WHERE project_sources.id = projects.project_source_id
+                ) AS "source_kind?",
+                (
+                    SELECT value
+                    FROM project_sources
+                    WHERE project_sources.id = projects.project_source_id
+                ) AS "source_value?",
+                tasks_kind AS "tasks_kind!",
+                tasks_path AS "tasks_path!",
+                obsidian_vault AS "obsidian_vault?",
+                snapshot_enabled AS "snapshot_enabled!: bool",
+                created_at AS "created_at!",
+                (paused_at IS NOT NULL) AS "is_paused!: bool"
+            "#,
+            $($argument),*
+        )
+    };
+}
+
 fn project_from_row(row: ProjectRow) -> Result<Project, ProjectRowError> {
     let id = project_value("id", row.id, ProjectId::try_new)?;
     let title = project_value("title", row.title, ProjectName::try_new)?;

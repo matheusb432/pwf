@@ -1,0 +1,129 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE projects\n        SET paused_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\n        WHERE id = ? AND paused_at IS NULL\n        \n            RETURNING\n                id AS \"id!\",\n                title AS \"title!\",\n                (\n                    SELECT kind\n                    FROM project_sources\n                    WHERE project_sources.id = projects.project_source_id\n                ) AS \"source_kind?\",\n                (\n                    SELECT value\n                    FROM project_sources\n                    WHERE project_sources.id = projects.project_source_id\n                ) AS \"source_value?\",\n                tasks_kind AS \"tasks_kind!\",\n                tasks_path AS \"tasks_path!\",\n                obsidian_vault AS \"obsidian_vault?\",\n                snapshot_enabled AS \"snapshot_enabled!: bool\",\n                created_at AS \"created_at!\",\n                (paused_at IS NOT NULL) AS \"is_paused!: bool\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "title!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "name": "source_kind?",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "project_sources",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "source_value?",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "project_sources",
+            "name": "value"
+          }
+        }
+      },
+      {
+        "name": "tasks_kind!",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "tasks_kind"
+          }
+        }
+      },
+      {
+        "name": "tasks_path!",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "tasks_path"
+          }
+        }
+      },
+      {
+        "name": "obsidian_vault?",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "obsidian_vault"
+          }
+        }
+      },
+      {
+        "name": "snapshot_enabled!: bool",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "snapshot_enabled"
+          }
+        }
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "is_paused!: bool",
+        "ordinal": 9,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ba101cf88943cab75ad29b83ee94cdb5945d4816c861f8b21b1d6ea1dd3a69a9"
+}
