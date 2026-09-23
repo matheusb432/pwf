@@ -2221,6 +2221,7 @@ dependencies = [
  "futures",
  "lazy-regex",
  "nutype",
+ "pulldown-cmark",
  "pwf-infra",
  "pwf-marker-sections",
  "pwf-models",

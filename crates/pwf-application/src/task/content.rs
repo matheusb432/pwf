@@ -1,6 +1,7 @@
 //! Applies body, section, and report transforms to task file bodies.
 
 use lazy_regex::{Regex, regex};
+use pulldown_cmark::{Event, Parser, Tag};
 use pwf_marker_sections::ParsedMarkerSections;
 use pwf_models::task::TaskBody;
 use pwf_wire::task::{TaskMarkerSection, TaskMarkerSectionEdits};
@@ -149,25 +150,8 @@ pub(in crate::task) fn edit_marker_sections(
     reject_duplicate_marker_sections(body, configuration)?;
     let mut edited = body.to_string();
 
-    for (section, remove) in [
-        (
-            TaskMarkerSection::Goal,
-            edits.removals().contains(&TaskMarkerSection::Goal),
-        ),
-        (
-            TaskMarkerSection::Context,
-            edits.removals().contains(&TaskMarkerSection::Context),
-        ),
-        (
-            TaskMarkerSection::Constraint,
-            edits.removals().contains(&TaskMarkerSection::Constraint),
-        ),
-        (
-            TaskMarkerSection::DoneWhen,
-            edits.removals().contains(&TaskMarkerSection::DoneWhen),
-        ),
-    ] {
-        if remove {
+    for section in TASK_MARKER_SECTIONS {
+        if edits.removals().contains(&section) {
             edited = clear_marker_section(&edited, section, configuration);
         }
     }
@@ -195,7 +179,7 @@ fn reject_duplicate_marker_sections(
 ) -> Result<(), EditMarkerSectionsError> {
     for section in TASK_MARKER_SECTIONS {
         let header = configuration.header(section);
-        if header_bounds(body, header).len() > 1 {
+        if header_bounds(body, header).nth(1).is_some() {
             return Err(EditMarkerSectionsError::DuplicateSection {
                 header: markdown_header(header),
             });
@@ -210,7 +194,7 @@ fn clear_marker_section(
     configuration: &TaskMarkerSections,
 ) -> String {
     let header = configuration.header(section);
-    let Some((header_start, header_end)) = header_bounds(body, header).into_iter().next() else {
+    let Some((header_start, header_end)) = header_bounds(body, header).next() else {
         return if section == TaskMarkerSection::Goal {
             insert_marker_section(body, section, &[], configuration)
         } else {
@@ -229,7 +213,7 @@ fn add_marker_section_values(
     configuration: &TaskMarkerSections,
 ) -> String {
     let header = configuration.header(section);
-    if header_bounds(body, header).is_empty() {
+    if header_bounds(body, header).next().is_none() {
         insert_marker_section(body, section, values, configuration)
     } else {
         append_bullets_to_section(body, header, values)
@@ -273,28 +257,53 @@ fn replace_region(body: &str, start: usize, end: usize, replacement: Option<&str
     parts.join("\n\n")
 }
 
-fn header_bounds(content: &str, header: &str) -> Vec<(usize, usize)> {
-    let mut bounds = Vec::new();
-    let mut offset = 0;
-    for segment in content.split('\n') {
-        if is_marker_section_header_line(segment, header) {
-            bounds.push((offset, offset + segment.len()));
-        }
-        offset += segment.len() + 1;
-    }
-    bounds
+fn header_bounds<'a>(
+    content: &'a str,
+    header: &'a str,
+) -> impl Iterator<Item = (usize, usize)> + 'a {
+    heading_bounds(content).filter(move |&(start, end)| {
+        content[start..end]
+            .strip_prefix("## ")
+            .and_then(|line| line.strip_prefix(header))
+            .is_some_and(|rest| rest.trim().is_empty())
+    })
+}
+
+fn heading_bounds(content: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let mut depth = 0;
+    Parser::new(content)
+        .into_offset_iter()
+        .filter_map(move |(event, range)| match event {
+            Event::Start(tag) => {
+                let heading = depth == 0 && matches!(tag, Tag::Heading { .. });
+                depth += 1;
+                heading.then(|| {
+                    let end =
+                        range.start + content[range.clone()].find('\n').unwrap_or(range.len());
+                    (range.start, end)
+                })
+            }
+            Event::End(_) => {
+                depth -= 1;
+                None
+            }
+            _ => None,
+        })
 }
 
 fn section_end(content: &str, header_end: usize) -> usize {
     let rest = &content[header_end..];
-    header_end + next_heading_offset(rest).unwrap_or(rest.len())
+    header_end
+        + heading_bounds(rest)
+            .next()
+            .map_or(rest.len(), |(start, _)| start)
 }
 
 fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) -> String {
     if bullets.is_empty() {
         return content.to_string();
     }
-    let Some(header_end) = header_line_end(content, header) else {
+    let Some((_, header_end)) = header_bounds(content, header).next() else {
         let mut out = content.trim_end().to_string();
         out.push_str("\n\n");
         out.push_str("## ");
@@ -303,8 +312,7 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
         out.push('\n');
         return out;
     };
-    let rest = &content[header_end..];
-    let section_end = header_end + next_heading_offset(rest).unwrap_or(rest.len());
+    let section_end = section_end(content, header_end);
     let before = content[..section_end].trim_end_matches('\n');
     let after = content[section_end..].trim_start_matches('\n');
     let mut out = before.to_string();
@@ -329,24 +337,6 @@ fn append_bullets(out: &mut String, bullets: &[String], first_separator: &'stati
     }
 }
 
-/// Returns the byte offset after an exact header line, allowing trailing whitespace.
-fn header_line_end(content: &str, header: &str) -> Option<usize> {
-    let mut offset = 0;
-    for segment in content.split('\n') {
-        if is_marker_section_header_line(segment, header) {
-            return Some(offset + segment.len());
-        }
-        offset += segment.len() + 1;
-    }
-    None
-}
-
-fn is_marker_section_header_line(line: &str, header: &str) -> bool {
-    line.strip_prefix("## ")
-        .and_then(|line| line.strip_prefix(header))
-        .is_some_and(|rest| rest.trim().is_empty())
-}
-
 fn markdown_header(header: &str) -> String {
     let mut markdown = String::with_capacity("## ".len() + header.len());
     markdown.push_str("## ");
@@ -361,23 +351,6 @@ const fn marker_section_index(section: TaskMarkerSection) -> usize {
         TaskMarkerSection::Constraint => 2,
         TaskMarkerSection::DoneWhen => 3,
     }
-}
-
-/// Returns the byte offset of the first Markdown heading line.
-fn next_heading_offset(content: &str) -> Option<usize> {
-    let mut offset = 0;
-    for segment in content.split('\n') {
-        if is_heading_line(segment) {
-            return Some(offset);
-        }
-        offset += segment.len() + 1;
-    }
-    None
-}
-
-fn is_heading_line(line: &str) -> bool {
-    let hashes = line.bytes().take_while(|&b| b == b'#').count();
-    (1..=6).contains(&hashes) && line[hashes..].starts_with(char::is_whitespace)
 }
 
 /// Appends a whitespace-collapsed report under a new `### Report` heading.
@@ -529,6 +502,39 @@ mod tests {
             append_marker_sections("## Goals\n- do the thing\n", "/c context"),
             "## Goals\n- do the thing\n\n## Context\n\n- context\n"
         );
+    }
+
+    #[test]
+    fn section_edits_preserve_markdown_examples() {
+        let configuration = TaskMarkerSections::default_fixture();
+        for example in [
+            "```markdown\n## Context\nexample\n```",
+            "~~~\n## Context\nexample\n~~~",
+            "    ## Context\n    example",
+            "> ## Context\n> example",
+        ] {
+            let original = format!("## Goals\n\n- keep\n\n{example}");
+            let edits = TaskMarkerSectionEdits::new(
+                pwf_wire::task::TaskMarkerSections::default(),
+                [TaskMarkerSection::Context],
+            );
+            assert_eq!(
+                edit_marker_sections(&original, &edits, &configuration).unwrap(),
+                None
+            );
+            let body = format!("{original}\n\n## Context\n\n- old");
+            assert_eq!(
+                edit_marker_sections(&body, &edits, &configuration)
+                    .unwrap()
+                    .unwrap(),
+                original,
+            );
+            let appended = super::append_marker_sections(&body, "new goal", &configuration);
+            assert_eq!(
+                appended,
+                format!("## Goals\n\n- keep\n\n{example}\n- new goal\n\n## Context\n\n- old")
+            );
+        }
     }
 
     #[test]
