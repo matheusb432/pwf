@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use pwf_infra::{
     clock::LocalClock, obsidian::ObsidianStore, session::LocalProjectDirectoryClient,
-    user_settings::TomlSettingsStore,
+    task_source_file::LocalTaskSourceFileReader, user_settings::TomlSettingsStore,
 };
 use pwf_models::project::HomeDirectory;
 use sqlx::SqlitePool;
@@ -20,6 +20,7 @@ pub struct AppState {
     pub(crate) store: ObsidianStore,
     pub(crate) clock: LocalClock,
     pub(crate) project_directory: LocalProjectDirectoryClient,
+    pub(crate) task_source_files: LocalTaskSourceFileReader,
     pub(crate) user_settings: TomlSettingsStore,
     pub(crate) task_mutations: Arc<tokio::sync::Mutex<()>>,
     pub(crate) task_list_snapshots: Arc<pwf_application::task::list_tasks::ListTasksSnapshots>,
@@ -53,6 +54,7 @@ impl AppState {
             home,
             clock: LocalClock,
             project_directory: LocalProjectDirectoryClient,
+            task_source_files: LocalTaskSourceFileReader,
             user_settings,
             task_mutations: Arc::new(tokio::sync::Mutex::new(())),
             task_list_snapshots: Arc::default(),

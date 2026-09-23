@@ -38,6 +38,17 @@ impl TaskClient {
             .map_err(ClientError::from)
     }
 
+    pub async fn create_task_from_file(
+        &self,
+        request: pb::CreateTaskFromFileRequest,
+    ) -> Result<pb::CreateTaskFromFileResponse, ClientError> {
+        self.client()
+            .create_task_from_file(request)
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(ClientError::from)
+    }
+
     pub async fn clone_task(
         &self,
         request: pb::CloneTaskRequest,

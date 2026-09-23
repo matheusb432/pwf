@@ -248,6 +248,15 @@ pub struct AddTask {
     pub priority: Option<PriorityTier>,
 }
 
+/// Requests creation of one task from an authored Markdown file.
+#[derive(Debug)]
+pub struct AddTaskFromFile {
+    /// Destination project ID.
+    pub project_id: ProjectId,
+    /// Local source file whose stem and contents become the task title and body.
+    pub source_file: PathBuf,
+}
+
 /// Copies task content and metadata into a new active task.
 #[derive(Debug, Clone)]
 pub struct CloneTask {

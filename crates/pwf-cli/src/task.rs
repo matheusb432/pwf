@@ -14,6 +14,7 @@ use crate::console::Console;
 
 mod activate;
 mod add;
+mod add_from_file;
 mod backlog;
 mod blocked_by_input;
 mod cancel;
@@ -282,8 +283,8 @@ pub struct TaskArguments {
 
 #[derive(Subcommand, Debug)]
 enum TaskCommand {
-    /// Add a pwf task with shorthand body text or explicit args
-    Add(add::Arguments),
+    /// Add a pwf task from text, explicit args, or a Markdown file
+    Add(Box<add::Arguments>),
     /// Copy a task into a new active task, optionally in another project.
     Clone(clone::Arguments),
     /// List tasks. `--all` lists everything

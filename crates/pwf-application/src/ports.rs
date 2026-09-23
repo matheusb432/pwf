@@ -8,5 +8,6 @@ pub mod project_store;
 pub mod project_task_files;
 pub mod project_task_location;
 pub mod task_marker_section_store;
+pub mod task_source_file;
 pub mod task_vault;
 pub mod user_settings;

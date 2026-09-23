@@ -470,6 +470,13 @@ pub mod create_task_request {
         Structured(super::StructuredTaskBody),
     }
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateTaskFromFileRequest {
+    #[prost(string, tag = "1")]
+    pub project_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub source_file: ::prost::alloc::string::String,
+}
 /// Creates an active task with the source title, body, tags, tiers, and blockers.
 /// Lifecycle timestamps and commits belong to the new task and are not copied.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -677,6 +684,13 @@ pub struct TaskMutationSummary {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateTaskResponse {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateTaskFromFileResponse {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]
@@ -3271,6 +3285,30 @@ pub mod task_service_client {
                 .insert(GrpcMethod::new("pwf.v1.TaskService", "CreateTask"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn create_task_from_file(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateTaskFromFileRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateTaskFromFileResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pwf.v1.TaskService/CreateTaskFromFile",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pwf.v1.TaskService", "CreateTaskFromFile"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn clone_task(
             &mut self,
             request: impl tonic::IntoRequest<super::CloneTaskRequest>,
@@ -3559,6 +3597,13 @@ pub mod task_service_server {
             tonic::Response<super::CreateTaskResponse>,
             tonic::Status,
         >;
+        async fn create_task_from_file(
+            &self,
+            request: tonic::Request<super::CreateTaskFromFileRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateTaskFromFileResponse>,
+            tonic::Status,
+        >;
         async fn clone_task(
             &self,
             request: tonic::Request<super::CloneTaskRequest>,
@@ -3749,6 +3794,52 @@ pub mod task_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CreateTaskSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/pwf.v1.TaskService/CreateTaskFromFile" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateTaskFromFileSvc<T: TaskService>(pub Arc<T>);
+                    impl<
+                        T: TaskService,
+                    > tonic::server::UnaryService<super::CreateTaskFromFileRequest>
+                    for CreateTaskFromFileSvc<T> {
+                        type Response = super::CreateTaskFromFileResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateTaskFromFileRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as TaskService>::create_task_from_file(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateTaskFromFileSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

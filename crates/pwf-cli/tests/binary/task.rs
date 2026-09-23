@@ -9,6 +9,49 @@ use crate::support::{
 };
 
 #[test]
+fn from_file_add_uses_file_stem_as_title_and_preserves_content() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    let source_directory = tempfile::tempdir().unwrap();
+    let source_path = source_directory.path().join("My very cool task.md");
+    let source = "# This is important\n\nKeep /g and all authored formatting.\n";
+
+    let missing = fixture
+        .database
+        .command()
+        .args(["task", "add", "from-file"])
+        .arg(&source_path)
+        .args(["--project", "foo"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+    let stderr = String::from_utf8(missing.stderr).unwrap();
+    assert!(stderr.contains("cannot read task source file"), "{stderr}");
+
+    std::fs::write(&source_path, source).unwrap();
+
+    fixture
+        .database
+        .command()
+        .args(["task", "add", "from-file"])
+        .arg(&source_path)
+        .args(["--project", "foo"])
+        .assert()
+        .success()
+        .stderr("");
+
+    let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
+    assert_eq!(task["title"], "My very cool task");
+    assert_eq!(task["body"], source.trim_end());
+    let task_path = fixture
+        .database
+        .command_args(&["task", "get", "FOO-0001", "--path"])
+        .success_stdout();
+    let stored = std::fs::read_to_string(task_path.trim()).unwrap();
+    assert!(stored.ends_with(source), "{stored:?}");
+}
+
+#[test]
 fn add_and_edit_short_options_persist_task_metadata() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     for title in ["first blocker", "second blocker"] {

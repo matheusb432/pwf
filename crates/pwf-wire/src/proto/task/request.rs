@@ -66,6 +66,18 @@ pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTa
     })
 }
 
+impl TryFrom<pb::CreateTaskFromFileRequest> for task::AddTaskFromFile {
+    type Error = Status;
+
+    fn try_from(request: pb::CreateTaskFromFileRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
+            project_id: ProjectId::try_new(request.project_id)
+                .map_err(|error| invalid("project_id", error))?,
+            source_file: request.source_file.into(),
+        })
+    }
+}
+
 impl TryFrom<pb::CloneTaskRequest> for task::CloneTask {
     type Error = Status;
 

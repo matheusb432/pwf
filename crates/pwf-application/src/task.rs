@@ -1,5 +1,6 @@
 pub mod activate_task;
 pub mod add_task;
+pub mod add_task_from_file;
 pub mod backlog_task;
 mod blocked_by;
 pub mod cancel_task;

@@ -667,6 +667,34 @@ async fn v1_create_task_returns_the_committed_task_summary() -> anyhow::Result<(
 }
 
 #[tokio::test]
+async fn v1_create_task_from_file_derives_title_and_preserves_body() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+    let source = "# Imported task\n\nKeep /g as authored.\n";
+    let source_file = server.root.path().join("Imported task.md");
+    std::fs::write(&source_file, source)?;
+
+    let response = pb::task_service_client::TaskServiceClient::with_interceptor(
+        server.channel().await?,
+        server::ReleaseRequest,
+    )
+    .create_task_from_file(Request::new(pb::CreateTaskFromFileRequest {
+        project_id: "FOO".to_string(),
+        source_file: source_file.to_string_lossy().into_owned(),
+    }))
+    .await?
+    .into_inner();
+
+    assert_eq!(response.id, "FOO-0002");
+    assert_eq!(response.task.as_ref().unwrap().title, "Imported task");
+    let record = task_record(&server, &response.id).await?;
+    assert_eq!(record.title, "Imported task");
+    assert_eq!(record.body, source);
+    assert!(record.source.ends_with(source), "{:?}", record.source);
+    server.finish().await
+}
+
+#[tokio::test]
 async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let blocker_id = server.add_project_and_task().await?;

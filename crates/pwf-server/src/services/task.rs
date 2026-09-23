@@ -7,6 +7,7 @@ use pwf_application::{
         CloseTaskError, TaskMarkerSectionsError,
         activate_task::{self, ActivateTaskError},
         add_task::{self, AddTaskError},
+        add_task_from_file::{self, AddTaskFromFileError},
         backlog_task::{self, BacklogTaskError},
         cancel_task::{self, CancelTaskError},
         clone_task::{self, CloneTaskError},
@@ -73,6 +74,32 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         .map(proto::task::create_task_response)
         .map(Response::new)
         .map_err(create_task_status)
+    }
+
+    async fn create_task_from_file(
+        &self,
+        request: Request<pb::CreateTaskFromFileRequest>,
+    ) -> Result<Response<pb::CreateTaskFromFileResponse>, Status> {
+        let command = request.into_inner().try_into()?;
+        let state = self.state.clone();
+        let mutation_guard = state.task_mutations.clone().lock_owned().await;
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let _mutation_guard = mutation_guard;
+            runtime.block_on(add_task_from_file::execute(
+                command,
+                &state.task_source_files,
+                &state.store,
+                &state.projects,
+                &state.clock,
+                &state.task_marker_sections,
+            ))
+        })
+        .await
+        .map_err(|error| Status::internal(format!("task creation worker failed: {error}")))?
+        .map(Into::into)
+        .map(Response::new)
+        .map_err(create_task_from_file_status)
     }
 
     async fn clone_task(
@@ -350,6 +377,20 @@ fn create_task_status(error: AddTaskError) -> Status {
         | AddTaskError::QueryProject(_)
         | AddTaskError::AllocateTaskId { .. }
         | AddTaskError::Clock(_) => Status::internal(message),
+    }
+}
+
+fn create_task_from_file_status(error: AddTaskFromFileError) -> Status {
+    let message = error.to_string();
+    match error {
+        AddTaskFromFileError::InvalidSourceFileName { .. }
+        | AddTaskFromFileError::InvalidTitle(_) => Status::invalid_argument(message),
+        AddTaskFromFileError::ReadSourceFile { source, .. } => match source.kind() {
+            std::io::ErrorKind::NotFound => Status::not_found(message),
+            std::io::ErrorKind::InvalidData => Status::invalid_argument(message),
+            _ => Status::internal(message),
+        },
+        AddTaskFromFileError::AddTask(error) => create_task_status(error),
     }
 }
 

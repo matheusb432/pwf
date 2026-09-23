@@ -1,4 +1,5 @@
-use clap::Args;
+use anyhow::Context as _;
+use clap::{Args, Subcommand};
 use pwf_client::{
     pb::{CreateTaskRequest, EffortTier, PriorityTier, StructuredTaskBody, create_task_request},
     task::TaskClient,
@@ -18,28 +19,47 @@ use super::{
 use crate::console::Console;
 
 #[derive(Args, Debug)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct Arguments {
+    #[command(subcommand)]
+    command: Option<Command>,
+    #[command(flatten)]
+    direct: DirectArguments,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Create a task whose title and body come from a Markdown file
+    FromFile(super::add_from_file::Arguments),
+}
+
+#[derive(Args, Debug)]
+struct DirectArguments {
     /// Managed project ID (two to four ASCII letters)
-    #[arg(value_name = "PROJECT", value_parser = crate::project::parse_project_id)]
-    pub(crate) project: ProjectId,
+    #[arg(
+        value_name = "PROJECT",
+        value_parser = crate::project::parse_project_id,
+        required = true
+    )]
+    project: Option<ProjectId>,
     /// Task body shorthand. Conflicts with marker-section-specific args.
     #[arg(value_name = "BODY")]
-    pub(crate) body: Vec<String>,
+    body: Vec<String>,
     #[command(flatten)]
     structured: StructuredBody,
     /// Blocked-by task ID or [[ID]]; repeat or comma-separate for several
     #[arg(short = 'b', long)]
-    pub(crate) blocked_by: Vec<BlockedByInput>,
+    blocked_by: Vec<BlockedByInput>,
     /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
     /// kebab-case
     #[arg(short = 't', long, allow_hyphen_values = true)]
-    pub(crate) tag: Vec<TagInput>,
+    tag: Vec<TagInput>,
     /// Effort/complexity tier.
     #[arg(short = 'e', long, value_enum)]
-    pub(crate) effort: Option<EffortChoice>,
+    effort: Option<EffortChoice>,
     /// Scheduling priority tier.
     #[arg(short = 'p', long, value_enum)]
-    pub(crate) priority: Option<PriorityChoice>,
+    priority: Option<PriorityChoice>,
 }
 
 #[derive(Args, Debug)]
@@ -69,8 +89,37 @@ pub(super) async fn run(
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
 ) -> Result<String, crate::error::Error> {
+    match arguments.command.as_ref() {
+        Some(Command::FromFile(arguments)) => {
+            super::add_from_file::run(arguments, console, task_status_colors, client, projects)
+                .await
+        }
+        None => {
+            run_direct(
+                &arguments.direct,
+                console,
+                task_status_colors,
+                client,
+                projects,
+            )
+            .await
+        }
+    }
+}
+
+async fn run_direct(
+    arguments: &DirectArguments,
+    console: Console,
+    task_status_colors: TaskStatusColors,
+    client: &TaskClient,
+    projects: &pwf_client::project::ProjectClient,
+) -> Result<String, crate::error::Error> {
     let (body, title_normalized) = request_body(arguments)?;
-    let project_id = crate::project::resolve_project_id(&arguments.project, projects).await?;
+    let project = arguments
+        .project
+        .as_ref()
+        .context("direct task creation requires a project")?;
+    let project_id = crate::project::resolve_project_id(project, projects).await?;
     let result = client
         .create_task(CreateTaskRequest {
             project_id: project_id.to_string(),
@@ -113,7 +162,7 @@ pub(super) async fn run(
     }
 }
 
-fn request_body(arguments: &Arguments) -> anyhow::Result<(create_task_request::Body, bool)> {
+fn request_body(arguments: &DirectArguments) -> anyhow::Result<(create_task_request::Body, bool)> {
     if let Some(title) = arguments.structured.title.as_deref() {
         let (title, normalized) = task_title(title)?;
         let sections = task_marker_sections(

@@ -22,6 +22,7 @@ mod settings {
 mod task {
     mod activate_task;
     mod add_task;
+    mod add_task_from_file;
     mod backlog_task;
     mod cancel_task;
     mod clone_task;
