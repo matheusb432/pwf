@@ -198,14 +198,14 @@ fn doctor_succeeds_for_a_healthy_registered_server() {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn offline_doctor_identifies_legacy_color_settings() {
+fn offline_doctor_identifies_invalid_color_and_task_body_settings() {
     let root = tempfile::tempdir().unwrap();
     let settings = root.path().join("config/pwf/config.toml");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
     fs::write(&settings, "[colors]\nactive = \"#6495ED\"\n").unwrap();
     let server = std::path::Path::new(support::command().get_program())
         .with_file_name(format!("pwf-server{}", std::env::consts::EXE_SUFFIX));
-    let output = std::process::Command::new(server)
+    let output = std::process::Command::new(&server)
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .env("APPDATA", root.path().join("config"))
         .env("PWF_DATABASE_PATH", root.path().join("missing.sqlite3"))
@@ -226,8 +226,30 @@ fn offline_doctor_identifies_legacy_color_settings() {
         "{report}"
     );
     assert_eq!(
-        fs::read_to_string(settings).unwrap(),
+        fs::read_to_string(&settings).unwrap(),
         "[colors]\nactive = \"#6495ED\"\n"
+    );
+
+    fs::write(&settings, "[task_body]\npreset = \"missing\"\n").unwrap();
+    let output = std::process::Command::new(&server)
+        .env("XDG_CONFIG_HOME", root.path().join("config"))
+        .env("APPDATA", root.path().join("config"))
+        .env("PWF_DATABASE_PATH", root.path().join("missing.sqlite3"))
+        .env("PWF_RUNTIME_DIR", root.path().join("runtime"))
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report["checks"].as_array().unwrap().iter().any(|check| {
+            check["name"] == "settings"
+                && check["detail"].as_str().unwrap().contains("`task_body`")
+                && check["action"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("Correct the setting named in the detail.")
+        }),
+        "{report}"
     );
 }
 

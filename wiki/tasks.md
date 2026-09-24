@@ -64,12 +64,12 @@ pwf app
 
 ## Lifecycle and copies
 
-Complete, cancel or reopen a task through its note:
+Complete, cancel or activate a task through its note:
 
 ```bash
 pwf task done app1
 pwf task cancel app2 --report "reason for stopping"
-pwf task reopen app1
+pwf task activate app1
 ```
 
 Creation and completion timestamps retain the machine's numeric UTC offset.

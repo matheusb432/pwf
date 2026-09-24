@@ -14,7 +14,7 @@ pub async fn inspect() -> DoctorReport {
         Err(error) => Check::fail(
             "settings",
             error.to_string(),
-            "Correct the settings file. Task colors belong under [colors.task], project colors under [colors.project], and note colors under [colors.note].",
+            "Correct the setting named in the detail. Colors belong under [colors.task], [colors.project], and [colors.note].",
         ),
     });
     match LocalEndpoint::from_environment() {

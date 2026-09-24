@@ -120,7 +120,7 @@ fn install_binaries(package: &Path, root: &Path, cargo: &Path) -> Result<()> {
     process::run(
         "Cargo binary installation",
         Command::new(cargo)
-            .args(["install", "--locked", "--force", "--path"])
+            .args(["+stable", "install", "--locked", "--force", "--path"])
             .arg(package)
             .args(["--root"])
             .arg(root)
