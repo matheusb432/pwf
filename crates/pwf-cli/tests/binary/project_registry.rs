@@ -317,15 +317,7 @@ fn add_vault_uses_current_directory_and_source_less_projects_support_tasks() {
     assert_eq!(project["snapshot_enabled"], false);
     assert!(project["source"].is_null());
     fixture
-        .command_args(&[
-            "task",
-            "add",
-            "foo",
-            "--title",
-            "sample",
-            "--goal",
-            "verify a vault project",
-        ])
+        .command_args(&["task", "add", "foo", "sample / verify a vault project"])
         .success_stdout();
     let listed = fixture
         .command_args(&["task", "list", "--project", "foo", "--long=rich"])

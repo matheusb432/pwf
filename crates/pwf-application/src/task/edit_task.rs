@@ -1,4 +1,7 @@
-use pwf_models::task::{BlockedBy, TaskId, TaskTags, TaskTitle, TaskTitleError};
+use pwf_models::{
+    project::ProjectId,
+    task::{BlockedBy, TaskId, TaskTags, TaskTitle, TaskTitleError},
+};
 use pwf_wire::{
     collection_edit::CollectionEdit,
     patch_field::PatchField,
@@ -13,20 +16,16 @@ use super::{
     TaskBodyTitleError,
     blocked_by::{self, BlockedByValidationError},
     commit_task_writes,
-    content::{
-        EditMarkerSectionsError, append_marker_sections, edit_marker_sections,
-        render_for_replacement,
-    },
+    content::{append_marker_sections, render_for_replacement},
     ensure_task_revision, expected_task_revision, infer_task_title,
-    marker_sections::{TaskMarkerSections, TaskMarkerSectionsError},
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
     resolve_task_project::{self, ResolveTaskProjectError},
     task_body_region,
 };
 use crate::ports::{
     project_store::ProjectStore,
-    task_marker_section_store::TaskMarkerSectionStore,
     task_vault::{NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite},
+    user_settings::{TaskBodyPresetReader, UserSettingsLoadError},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -46,7 +45,7 @@ pub enum EditTaskError {
     #[error(transparent)]
     InvalidTitle(#[from] TaskBodyTitleError),
     #[error(transparent)]
-    MarkerSections(#[from] TaskMarkerSectionsError),
+    TaskBodyPresets(#[from] UserSettingsLoadError),
     #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
     InvalidTagsFrontmatter { id: TaskId, raw: String },
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
@@ -71,8 +70,6 @@ pub enum EditTaskError {
     SelfBlockedBy { target: TaskId, blocker: TaskId },
     #[error("blocked_by cycle: {}", blocked_by::format_task_ids_path(path))]
     BlockedByCycle { path: Vec<TaskId> },
-    #[error("cannot edit sections: task body contains more than one `{header}` section.")]
-    AmbiguousMarkerSections { header: String },
     #[error(transparent)]
     WriteStore(anyhow::Error),
     #[error(transparent)]
@@ -87,7 +84,7 @@ pub async fn execute(
     command: EditTask,
     store: &impl TaskVault,
     project_store: &impl ProjectStore,
-    marker_section_store: &impl TaskMarkerSectionStore,
+    preset_reader: &impl TaskBodyPresetReader,
 ) -> Result<TaskMutationResult<()>, EditTaskError> {
     let project = resolve_task_project::execute(command.id.clone(), project_store)
         .await
@@ -127,10 +124,7 @@ pub async fn execute(
             .map_err(map_blocked_by_error)?;
     }
     let (body, title) = match command.edits.content() {
-        SetField::Set(content) => {
-            let marker_sections = marker_section_store.get_task_marker_sections().await?;
-            prepare_content(content, &record, &marker_sections)?
-        }
+        SetField::Set(content) => prepare_content(content, &record, &project.id, preset_reader)?,
         SetField::NoAction => (SetField::NoAction, SetField::NoAction),
     };
     let patch = TaskPatch {
@@ -174,27 +168,33 @@ fn map_project_error(error: ResolveTaskProjectError, id: &TaskId) -> EditTaskErr
     }
 }
 
+/// Loads the project's preset only for edits that parse shorthand.
 fn prepare_content(
     content: &EditTaskContent,
     record: &TaskRecord,
-    marker_sections: &TaskMarkerSections,
+    project_id: &ProjectId,
+    preset_reader: &impl TaskBodyPresetReader,
 ) -> Result<(SetField<String>, SetField<TaskTitle>), EditTaskError> {
     let current_body = task_body_region(&record.body);
     match content.kind() {
-        EditTaskContentKind::Structured { title, sections } => Ok((
-            edit_marker_sections(current_body, sections, marker_sections)
-                .map_err(map_marker_section_error)?
-                .into(),
-            title.clone(),
-        )),
-        EditTaskContentKind::AppendShorthand { title, body } => Ok((
-            SetField::Set(append_marker_sections(current_body, body, marker_sections)),
-            title.clone(),
-        )),
-        EditTaskContentKind::ReplaceShorthand { body } => {
-            let title = infer_task_title(body, marker_sections)?;
+        EditTaskContentKind::Title(title) => Ok((SetField::NoAction, SetField::Set(title.clone()))),
+        EditTaskContentKind::AppendShorthand { title, body } => {
+            let presets = preset_reader.load_task_body_presets()?;
             Ok((
-                SetField::Set(render_for_replacement(body, marker_sections)),
+                SetField::Set(append_marker_sections(
+                    current_body,
+                    body,
+                    presets.for_project(project_id),
+                )),
+                title.clone(),
+            ))
+        }
+        EditTaskContentKind::ReplaceShorthand { body } => {
+            let presets = preset_reader.load_task_body_presets()?;
+            let preset = presets.for_project(project_id);
+            let title = infer_task_title(body, preset)?;
+            Ok((
+                SetField::Set(render_for_replacement(body, preset)),
                 SetField::Set(title),
             ))
         }
@@ -283,12 +283,4 @@ fn merge_appended_tags(
             }
         })?;
     Ok(existing.merge(appended))
-}
-
-fn map_marker_section_error(error: EditMarkerSectionsError) -> EditTaskError {
-    match error {
-        EditMarkerSectionsError::DuplicateSection { header } => {
-            EditTaskError::AmbiguousMarkerSections { header }
-        }
-    }
 }

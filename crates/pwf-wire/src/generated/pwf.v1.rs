@@ -427,28 +427,38 @@ pub mod delete_note_response {
         Result(super::DeleteNoteResult),
     }
 }
+/// Omission selects the global preset; a supplied project applies its override.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TaskMarkerSections {
-    #[prost(string, repeated, tag = "1")]
-    pub goals: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "2")]
-    pub context: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "3")]
-    pub constraints: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "4")]
-    pub done_when: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+pub struct GetTaskBodySectionsRequest {
+    #[prost(string, optional, tag = "1")]
+    pub project_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct StructuredTaskBody {
+pub struct TaskBodySection {
     #[prost(string, tag = "1")]
-    pub title: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
-    pub sections: ::core::option::Option<TaskMarkerSections>,
+    pub marker: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub header: ::prost::alloc::string::String,
+    /// Markdown ATX heading level from 1 through 6.
+    #[prost(uint32, tag = "3")]
+    pub heading_level: u32,
+    #[prost(enumeration = "TaskBodyItemStyle", tag = "4")]
+    pub item_style: i32,
+}
+/// Lists the effective preset's sections in rendering order.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetTaskBodySectionsResponse {
+    #[prost(string, tag = "1")]
+    pub preset: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub sections: ::prost::alloc::vec::Vec<TaskBodySection>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateTaskRequest {
     #[prost(string, tag = "1")]
     pub project_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub shorthand: ::prost::alloc::string::String,
     #[prost(string, repeated, tag = "5")]
     pub blocked_by: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "EffortTier", optional, tag = "6")]
@@ -457,18 +467,6 @@ pub struct CreateTaskRequest {
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "PriorityTier", optional, tag = "8")]
     pub priority: ::core::option::Option<i32>,
-    #[prost(oneof = "create_task_request::Body", tags = "2, 3")]
-    pub body: ::core::option::Option<create_task_request::Body>,
-}
-/// Nested message and enum types in `CreateTaskRequest`.
-pub mod create_task_request {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Body {
-        #[prost(string, tag = "2")]
-        Shorthand(::prost::alloc::string::String),
-        #[prost(message, tag = "3")]
-        Structured(super::StructuredTaskBody),
-    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateTaskFromFileRequest {
@@ -568,16 +566,6 @@ pub mod priority_edit {
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct StructuredTaskEdit {
-    /// Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
-    #[prost(string, optional, tag = "1")]
-    pub title: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "2")]
-    pub additions: ::core::option::Option<TaskMarkerSections>,
-    #[prost(enumeration = "TaskMarkerSection", repeated, tag = "3")]
-    pub removals: ::prost::alloc::vec::Vec<i32>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AppendTaskBody {
     /// Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
     #[prost(string, optional, tag = "1")]
@@ -587,19 +575,20 @@ pub struct AppendTaskBody {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskContentEdit {
-    #[prost(oneof = "task_content_edit::Content", tags = "1, 2, 3")]
+    #[prost(oneof = "task_content_edit::Content", tags = "2, 3, 4")]
     pub content: ::core::option::Option<task_content_edit::Content>,
 }
 /// Nested message and enum types in `TaskContentEdit`.
 pub mod task_content_edit {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Content {
-        #[prost(message, tag = "1")]
-        Structured(super::StructuredTaskEdit),
         #[prost(message, tag = "2")]
         Append(super::AppendTaskBody),
         #[prost(string, tag = "3")]
         Replace(::prost::alloc::string::String),
+        /// Sets a nonempty title and leaves the body unchanged.
+        #[prost(string, tag = "4")]
+        Title(::prost::alloc::string::String),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1380,35 +1369,32 @@ impl NoteListLimitKind {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum TaskMarkerSection {
+pub enum TaskBodyItemStyle {
     Unspecified = 0,
-    Goal = 1,
-    Context = 2,
-    Constraint = 3,
-    DoneWhen = 4,
+    Bullet = 1,
+    Numbered = 2,
+    Paragraph = 3,
 }
-impl TaskMarkerSection {
+impl TaskBodyItemStyle {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            Self::Unspecified => "TASK_MARKER_SECTION_UNSPECIFIED",
-            Self::Goal => "TASK_MARKER_SECTION_GOAL",
-            Self::Context => "TASK_MARKER_SECTION_CONTEXT",
-            Self::Constraint => "TASK_MARKER_SECTION_CONSTRAINT",
-            Self::DoneWhen => "TASK_MARKER_SECTION_DONE_WHEN",
+            Self::Unspecified => "TASK_BODY_ITEM_STYLE_UNSPECIFIED",
+            Self::Bullet => "TASK_BODY_ITEM_STYLE_BULLET",
+            Self::Numbered => "TASK_BODY_ITEM_STYLE_NUMBERED",
+            Self::Paragraph => "TASK_BODY_ITEM_STYLE_PARAGRAPH",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
-            "TASK_MARKER_SECTION_UNSPECIFIED" => Some(Self::Unspecified),
-            "TASK_MARKER_SECTION_GOAL" => Some(Self::Goal),
-            "TASK_MARKER_SECTION_CONTEXT" => Some(Self::Context),
-            "TASK_MARKER_SECTION_CONSTRAINT" => Some(Self::Constraint),
-            "TASK_MARKER_SECTION_DONE_WHEN" => Some(Self::DoneWhen),
+            "TASK_BODY_ITEM_STYLE_UNSPECIFIED" => Some(Self::Unspecified),
+            "TASK_BODY_ITEM_STYLE_BULLET" => Some(Self::Bullet),
+            "TASK_BODY_ITEM_STYLE_NUMBERED" => Some(Self::Numbered),
+            "TASK_BODY_ITEM_STYLE_PARAGRAPH" => Some(Self::Paragraph),
             _ => None,
         }
     }
@@ -3501,6 +3487,30 @@ pub mod task_service_client {
                 .insert(GrpcMethod::new("pwf.v1.TaskService", "GetTaskDag"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn get_task_body_sections(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetTaskBodySectionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTaskBodySectionsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pwf.v1.TaskService/GetTaskBodySections",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pwf.v1.TaskService", "GetTaskBodySections"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn list_tasks(
             &mut self,
             request: impl tonic::IntoRequest<super::ListTasksRequest>,
@@ -3655,6 +3665,13 @@ pub mod task_service_server {
             request: tonic::Request<super::GetTaskDagRequest>,
         ) -> std::result::Result<
             tonic::Response<super::GetTaskDagResponse>,
+            tonic::Status,
+        >;
+        async fn get_task_body_sections(
+            &self,
+            request: tonic::Request<super::GetTaskBodySectionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTaskBodySectionsResponse>,
             tonic::Status,
         >;
         async fn list_tasks(
@@ -4200,6 +4217,52 @@ pub mod task_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetTaskDagSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/pwf.v1.TaskService/GetTaskBodySections" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTaskBodySectionsSvc<T: TaskService>(pub Arc<T>);
+                    impl<
+                        T: TaskService,
+                    > tonic::server::UnaryService<super::GetTaskBodySectionsRequest>
+                    for GetTaskBodySectionsSvc<T> {
+                        type Response = super::GetTaskBodySectionsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetTaskBodySectionsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as TaskService>::get_task_body_sections(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetTaskBodySectionsSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

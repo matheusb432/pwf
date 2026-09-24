@@ -31,6 +31,7 @@ service TaskService {
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
   rpc GetTaskRecord(GetTaskRecordRequest) returns (GetTaskRecordResponse);
   rpc GetTaskDag(GetTaskDagRequest) returns (GetTaskDagResponse);
+  rpc GetTaskBodySections(GetTaskBodySectionsRequest) returns (GetTaskBodySectionsResponse);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
   rpc DeleteTask(stream DeleteTaskRequest) returns (stream DeleteTaskResponse);
   rpc ActivateTask(stream ActivateTaskRequest) returns (stream ActivateTaskResponse);
@@ -309,24 +310,30 @@ message DeleteNoteResponse {
   }
 }
 
-enum TaskMarkerSection {
-  TASK_MARKER_SECTION_UNSPECIFIED = 0;
-  TASK_MARKER_SECTION_GOAL = 1;
-  TASK_MARKER_SECTION_CONTEXT = 2;
-  TASK_MARKER_SECTION_CONSTRAINT = 3;
-  TASK_MARKER_SECTION_DONE_WHEN = 4;
+// Omission selects the global preset; a supplied project applies its override.
+message GetTaskBodySectionsRequest {
+  optional string project_id = 1;
 }
 
-message TaskMarkerSections {
-  repeated string goals = 1;
-  repeated string context = 2;
-  repeated string constraints = 3;
-  repeated string done_when = 4;
+enum TaskBodyItemStyle {
+  TASK_BODY_ITEM_STYLE_UNSPECIFIED = 0;
+  TASK_BODY_ITEM_STYLE_BULLET = 1;
+  TASK_BODY_ITEM_STYLE_NUMBERED = 2;
+  TASK_BODY_ITEM_STYLE_PARAGRAPH = 3;
 }
 
-message StructuredTaskBody {
-  string title = 1;
-  TaskMarkerSections sections = 2;
+message TaskBodySection {
+  string marker = 1;
+  string header = 2;
+  // Markdown ATX heading level from 1 through 6.
+  uint32 heading_level = 3;
+  TaskBodyItemStyle item_style = 4;
+}
+
+// Lists the effective preset's sections in rendering order.
+message GetTaskBodySectionsResponse {
+  string preset = 1;
+  repeated TaskBodySection sections = 2;
 }
 
 enum EffortTier {
@@ -349,10 +356,9 @@ message CreateTaskRequest {
   reserved 4;
   reserved "index_section";
   string project_id = 1;
-  oneof body {
-    string shorthand = 2;
-    StructuredTaskBody structured = 3;
-  }
+  string shorthand = 2;
+  reserved 3;
+  reserved "structured";
   repeated string blocked_by = 5;
   optional EffortTier effort = 6;
   repeated string tags = 7;
@@ -427,13 +433,6 @@ message PriorityEdit {
   }
 }
 
-message StructuredTaskEdit {
-  // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
-  optional string title = 1;
-  TaskMarkerSections additions = 2;
-  repeated TaskMarkerSection removals = 3;
-}
-
 message AppendTaskBody {
   // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
   optional string title = 1;
@@ -441,10 +440,13 @@ message AppendTaskBody {
 }
 
 message TaskContentEdit {
+  reserved 1;
+  reserved "structured";
   oneof content {
-    StructuredTaskEdit structured = 1;
     AppendTaskBody append = 2;
     string replace = 3;
+    // Sets a nonempty title and leaves the body unchanged.
+    string title = 4;
   }
 }
 

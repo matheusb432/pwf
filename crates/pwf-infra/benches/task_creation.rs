@@ -9,7 +9,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use pwf_application::task::add_task;
 use pwf_infra::{
     clock::LocalClock, database, obsidian::ObsidianStore, project_store::SqliteProjectStore,
-    task_marker_section_store::SqliteTaskMarkerSectionStore,
+    user_settings::TomlSettingsStore,
 };
 use pwf_models::project::HomeDirectory;
 use pwf_wire::task::{AddTask, AddTaskBody};
@@ -22,7 +22,7 @@ struct Fixture {
     tasks: std::path::PathBuf,
     store: ObsidianStore,
     projects: SqliteProjectStore,
-    marker_sections: SqliteTaskMarkerSectionStore,
+    settings: TomlSettingsStore,
 }
 
 impl Fixture {
@@ -63,7 +63,7 @@ impl Fixture {
             tasks,
             store,
             projects: SqliteProjectStore::new(pool.clone()),
-            marker_sections: SqliteTaskMarkerSectionStore::new(pool),
+            settings: TomlSettingsStore::new(None),
         }
     }
 
@@ -82,7 +82,7 @@ impl Fixture {
             &self.store,
             &self.projects,
             &LocalClock,
-            &self.marker_sections,
+            &self.settings,
         )))
         .outcome
     }

@@ -1,9 +1,8 @@
 use clap::{ArgGroup, Args};
 use pwf_client::{
     pb::{
-        self, AppendTaskBody, ClearField, StringCollectionEdit, StructuredTaskEdit,
-        TaskContentEdit, TaskMarkerSection, UpdateTaskRequest, effort_edit, priority_edit,
-        task_content_edit,
+        self, AppendTaskBody, ClearField, StringCollectionEdit, TaskContentEdit, UpdateTaskRequest,
+        effort_edit, priority_edit, task_content_edit,
     },
     task::TaskClient,
 };
@@ -13,40 +12,30 @@ use pwf_models::{
 };
 
 use super::{
-    EffortChoice, Identifier, MarkerSectionFlagMode, PriorityChoice,
+    EffortChoice, Identifier, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
     render::{TITLE_NORMALIZED_NOTICE, TaskMutationAction, render_mutation},
-    task_marker_sections, task_title,
+    task_title,
 };
 use crate::{console::Console, edit::string_collection_edit};
 
 const EDIT: &str = "task_edit";
-const MARKER_SECTIONS: &str = "task_marker_section_edits";
-const MARKER_SECTION_GROUPS: [&str; 2] = [EDIT, MARKER_SECTIONS];
 
 #[derive(Args, Debug)]
 #[command(group(ArgGroup::new(EDIT).required(true).multiple(true)))]
-#[command(group(ArgGroup::new(MARKER_SECTIONS).multiple(true).conflicts_with_all(["body", "append"])))]
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
-    /// Replace the title and every marker section using shorthand body syntax.
-    #[arg(long, group = EDIT, conflicts_with_all = ["title", "append"])]
-    pub(crate) body: Option<String>,
+    /// Replace the title and body with shorthand; leading text becomes the title. See `pwf task
+    /// sections`.
+    #[arg(long, group = EDIT, conflicts_with_all = ["title", "append_body"])]
+    pub(crate) replace_body: Option<String>,
     /// Replace the title. The normalized title cannot exceed 200 characters.
     #[arg(long, group = EDIT)]
     pub(crate) title: Option<String>,
-    /// Append shorthand marker-section content without changing the title.
+    /// Append shorthand items to their sections; leading text joins the first section.
     #[arg(short = 'a', long, group = EDIT)]
-    pub(crate) append: Option<String>,
-    #[command(flatten)]
-    goals: GoalEdits,
-    #[command(flatten)]
-    contexts: ContextEdits,
-    #[command(flatten)]
-    constraints: ConstraintEdits,
-    #[command(flatten)]
-    done_whens: DoneWhenEdits,
+    pub(crate) append_body: Option<String>,
     #[command(flatten)]
     blocked_by: BlockedByEdits,
     #[command(flatten)]
@@ -55,46 +44,6 @@ pub struct Arguments {
     effort: EffortEdit,
     #[command(flatten)]
     priority: PriorityEdit,
-}
-
-#[derive(Args, Debug)]
-struct GoalEdits {
-    /// Append a Goal bullet; repeat for several.
-    #[arg(long, groups = MARKER_SECTION_GROUPS)]
-    add_goal: Vec<String>,
-    /// Remove every Goal before applying `--add-goal` values.
-    #[arg(long, groups = MARKER_SECTION_GROUPS)]
-    remove_goals: bool,
-}
-
-#[derive(Args, Debug)]
-struct ContextEdits {
-    /// Append a Context bullet; repeat for several.
-    #[arg(long, groups = MARKER_SECTION_GROUPS)]
-    add_context: Vec<String>,
-    /// Remove every Context before applying `--add-context` values.
-    #[arg(long, groups = MARKER_SECTION_GROUPS)]
-    remove_contexts: bool,
-}
-
-#[derive(Args, Debug)]
-struct ConstraintEdits {
-    /// Append a Constraint bullet; repeat for several.
-    #[arg(long, groups = MARKER_SECTION_GROUPS)]
-    add_constraint: Vec<String>,
-    /// Remove every Constraint before applying `--add-constraint` values.
-    #[arg(long, groups = MARKER_SECTION_GROUPS)]
-    remove_constraints: bool,
-}
-
-#[derive(Args, Debug)]
-struct DoneWhenEdits {
-    /// Append a Done When bullet; repeat for several.
-    #[arg(long, groups = MARKER_SECTION_GROUPS)]
-    add_done_when: Vec<String>,
-    /// Remove every Done When before applying `--add-done-when` values.
-    #[arg(long, groups = MARKER_SECTION_GROUPS)]
-    remove_done_whens: bool,
 }
 
 #[derive(Args, Debug)]
@@ -240,66 +189,24 @@ fn content_edit(
     arguments: &Arguments,
     title: Option<&TaskTitle>,
 ) -> anyhow::Result<Option<TaskContentEdit>> {
-    let additions = task_marker_sections(
-        &arguments.goals.add_goal,
-        &arguments.contexts.add_context,
-        &arguments.constraints.add_constraint,
-        &arguments.done_whens.add_done_when,
-        MarkerSectionFlagMode::Edit,
-    )?;
-    let removals = [
-        arguments
-            .goals
-            .remove_goals
-            .then_some(TaskMarkerSection::Goal),
-        arguments
-            .contexts
-            .remove_contexts
-            .then_some(TaskMarkerSection::Context),
-        arguments
-            .constraints
-            .remove_constraints
-            .then_some(TaskMarkerSection::Constraint),
-        arguments
-            .done_whens
-            .remove_done_whens
-            .then_some(TaskMarkerSection::DoneWhen),
-    ]
-    .into_iter()
-    .flatten();
-    let removals = removals.map(|section| section as i32).collect::<Vec<_>>();
-    let content = if let Some(body) = arguments.body.as_ref() {
-        Some(TaskContentEdit {
-            content: Some(task_content_edit::Content::Replace(body.clone())),
-        })
-    } else if let Some(body) = arguments.append.as_ref() {
+    let content = if let Some(body) = arguments.replace_body.as_ref() {
+        task_content_edit::Content::Replace(body.clone())
+    } else if let Some(body) = arguments.append_body.as_ref() {
         if body.trim().is_empty() {
-            return Err(anyhow::anyhow!("--append cannot be empty."));
+            return Err(anyhow::anyhow!("--append-body cannot be empty."));
         }
-        Some(TaskContentEdit {
-            content: Some(task_content_edit::Content::Append(AppendTaskBody {
-                title: title.map(ToString::to_string),
-                body: body.clone(),
-            })),
+        task_content_edit::Content::Append(AppendTaskBody {
+            title: title.map(ToString::to_string),
+            body: body.clone(),
         })
-    } else if title.is_some()
-        || !additions.goals.is_empty()
-        || !additions.context.is_empty()
-        || !additions.constraints.is_empty()
-        || !additions.done_when.is_empty()
-        || !removals.is_empty()
-    {
-        Some(TaskContentEdit {
-            content: Some(task_content_edit::Content::Structured(StructuredTaskEdit {
-                title: title.map(ToString::to_string),
-                additions: Some(additions),
-                removals,
-            })),
-        })
+    } else if let Some(title) = title {
+        task_content_edit::Content::Title(title.to_string())
     } else {
-        None
+        return Ok(None);
     };
-    Ok(content)
+    Ok(Some(TaskContentEdit {
+        content: Some(content),
+    }))
 }
 
 fn wire_effort(value: EffortChoice) -> pb::EffortTier {

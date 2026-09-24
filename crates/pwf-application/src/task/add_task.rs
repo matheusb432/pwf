@@ -4,17 +4,16 @@ use pwf_wire::task::{AddTask, AddTaskBody, TaskMutationResult, TaskMutationSumma
 use super::{
     TaskBodyTitleError,
     blocked_by::{self, BlockedByValidationError},
-    content::{render_for_creation, render_marker_sections},
+    content::render_for_creation,
     infer_task_title,
-    marker_sections::TaskMarkerSectionsError,
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
 };
 use crate::{
     ports::{
         clock::Clock,
         project_store::ProjectStore,
-        task_marker_section_store::TaskMarkerSectionStore,
         task_vault::{NewTask, NewTaskBody, TaskInsertion, TaskVault},
+        user_settings::{TaskBodyPresetReader, UserSettingsLoadError},
     },
     project::{get_active_project, get_project::GetProjectError},
 };
@@ -53,7 +52,7 @@ pub enum AddTaskError {
     #[error(transparent)]
     InvalidTitle(#[from] TaskBodyTitleError),
     #[error(transparent)]
-    MarkerSections(#[from] TaskMarkerSectionsError),
+    TaskBodyPresets(#[from] UserSettingsLoadError),
     #[error("cannot read the task creation time: {0}")]
     Clock(#[from] TaskTimestampError),
     #[error(transparent)]
@@ -66,7 +65,7 @@ pub async fn execute(
     store: &impl TaskVault,
     project_store: &impl ProjectStore,
     clock: &impl Clock,
-    marker_section_store: &impl TaskMarkerSectionStore,
+    preset_reader: &impl TaskBodyPresetReader,
 ) -> Result<TaskMutationResult<TaskId>, AddTaskError> {
     let AddTask {
         project_id,
@@ -80,17 +79,11 @@ pub async fn execute(
     let (title, body) = match body {
         AddTaskBody::Body { title, body } => (title, NewTaskBody::Verbatim(body)),
         AddTaskBody::Shorthand(body) => {
-            let sections = marker_section_store.get_task_marker_sections().await?;
+            let presets = preset_reader.load_task_body_presets()?;
+            let preset = presets.for_project(&project.id);
             (
-                infer_task_title(&body, &sections)?,
-                NewTaskBody::Rendered(render_for_creation(&body, &sections)),
-            )
-        }
-        AddTaskBody::Structured { title, sections } => {
-            let configuration = marker_section_store.get_task_marker_sections().await?;
-            (
-                title,
-                NewTaskBody::Rendered(render_marker_sections(&sections, &configuration)),
+                infer_task_title(&body, preset)?,
+                NewTaskBody::Rendered(render_for_creation(&body, preset)),
             )
         }
     };

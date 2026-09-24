@@ -17,3 +17,17 @@ paused = "#FF6B8A"
 [colors.note]
 active = "#6495ED"
 verified = "#A3E635"
+
+[task_body]
+preset = "default" # default | alt | a preset below; projects without an override use it
+
+[task_body.projects]
+app = "prompt" # project ID = preset name
+
+[task_body.presets.prompt]
+# level: heading level 1..6 (default 2); items: bullet (default) | numbered | paragraph
+sections = [
+  { marker = "/g", title = "Goals", level = 3, items = "numbered" },
+  { marker = "/c", title = "Context", level = 3, items = "paragraph" },
+  { marker = "/d", title = "Done When", level = 3 },
+]

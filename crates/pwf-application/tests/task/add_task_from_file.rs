@@ -37,7 +37,7 @@ async fn add_from_file_uses_the_filename_and_authored_body(pool: sqlx::SqlitePoo
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool),
+        &crate::support::FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();

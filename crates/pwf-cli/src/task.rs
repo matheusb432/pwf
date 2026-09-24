@@ -1,6 +1,6 @@
 use clap::{Args, FromArgMatches, Subcommand};
 use pwf_client::{
-    pb::{TaskMarkerSection, TaskMarkerSections, TaskStatusFilter},
+    pb::TaskStatusFilter,
     project::ProjectClient,
     task::{TaskClient, TaskDag},
 };
@@ -27,6 +27,7 @@ mod list;
 mod remove;
 mod render;
 pub mod route;
+mod sections;
 pub mod session;
 
 /// Renders the default task-DAG view for the Criterion benchmark.
@@ -208,62 +209,6 @@ fn task_title(raw: &str) -> anyhow::Result<(TaskTitle, bool)> {
     Ok((title, normalized))
 }
 
-#[derive(Debug, Clone, Copy)]
-enum MarkerSectionFlagMode {
-    Add,
-    Edit,
-}
-
-impl MarkerSectionFlagMode {
-    fn flag(self, section: TaskMarkerSection) -> &'static str {
-        match (self, section) {
-            (Self::Add, TaskMarkerSection::Goal) => "--goal",
-            (Self::Add, TaskMarkerSection::Context) => "--context",
-            (Self::Add, TaskMarkerSection::Constraint) => "--constraint",
-            (Self::Add, TaskMarkerSection::DoneWhen) => "--done-when",
-            (Self::Edit, TaskMarkerSection::Goal) => "--add-goal",
-            (Self::Edit, TaskMarkerSection::Context) => "--add-context",
-            (Self::Edit, TaskMarkerSection::Constraint) => "--add-constraint",
-            (Self::Edit, TaskMarkerSection::DoneWhen) => "--add-done-when",
-            (_, TaskMarkerSection::Unspecified) => "--marker-section",
-        }
-    }
-}
-
-fn task_marker_sections(
-    goals: &[String],
-    context: &[String],
-    constraints: &[String],
-    done_when: &[String],
-    mode: MarkerSectionFlagMode,
-) -> anyhow::Result<TaskMarkerSections> {
-    Ok(TaskMarkerSections {
-        goals: normalize_marker_sections(goals, mode.flag(TaskMarkerSection::Goal))?,
-        context: normalize_marker_sections(context, mode.flag(TaskMarkerSection::Context))?,
-        constraints: normalize_marker_sections(
-            constraints,
-            mode.flag(TaskMarkerSection::Constraint),
-        )?,
-        done_when: normalize_marker_sections(done_when, mode.flag(TaskMarkerSection::DoneWhen))?,
-    })
-}
-
-fn normalize_marker_sections(values: &[String], flag: &str) -> anyhow::Result<Vec<String>> {
-    values
-        .iter()
-        .map(|value| {
-            if value.contains(['\n', '\r']) {
-                return Err(anyhow::anyhow!("{flag} must be a single line."));
-            }
-            let value = value.trim();
-            if value.is_empty() {
-                return Err(anyhow::anyhow!("{flag} cannot be empty."));
-            }
-            Ok(value.to_string())
-        })
-        .collect()
-}
-
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Manages pwf tasks
@@ -283,7 +228,7 @@ pub struct TaskArguments {
 
 #[derive(Subcommand, Debug)]
 enum TaskCommand {
-    /// Add a pwf task from text, explicit args, or a Markdown file
+    /// Add a pwf task from shorthand text or a Markdown file
     Add(Box<add::Arguments>),
     /// Copy a task into a new active task, optionally in another project.
     Clone(clone::Arguments),
@@ -307,6 +252,8 @@ enum TaskCommand {
     Dag(dag::Arguments),
     /// Delete a task file
     Remove(remove::Arguments),
+    /// Show the shorthand section markers and how each section renders
+    Sections(sections::Arguments),
 }
 
 pub async fn run(
@@ -352,6 +299,7 @@ pub async fn run(
             TaskCommand::Remove(arguments) => {
                 remove::run(arguments, console, task_status_colors, client).await?
             }
+            TaskCommand::Sections(arguments) => sections::run(arguments, client).await?,
         },
         Command::Session(arguments) => session::run(arguments, console, client).await?,
         Command::Route(arguments) => match route::resolve(arguments) {
@@ -407,7 +355,7 @@ impl ContentSelection {
 
 #[cfg(test)]
 mod tests {
-    use super::{MarkerSectionFlagMode, task_marker_sections, task_title};
+    use super::task_title;
 
     #[test]
     fn task_title_reports_whitespace_normalization_only() {
@@ -430,31 +378,5 @@ mod tests {
     #[test]
     fn task_title_rejects_blank_machine_input() {
         assert!(task_title(" \t ").is_err());
-    }
-
-    #[test]
-    fn task_marker_sections_report_the_owning_machine_flag() {
-        let empty_goal = task_marker_sections(
-            &["  ".to_string()],
-            &[],
-            &[],
-            &[],
-            MarkerSectionFlagMode::Add,
-        )
-        .unwrap_err();
-        assert_eq!(empty_goal.to_string(), "--goal cannot be empty.");
-
-        let multiline_context = task_marker_sections(
-            &[],
-            &["first\nsecond".to_string()],
-            &[],
-            &[],
-            MarkerSectionFlagMode::Edit,
-        )
-        .unwrap_err();
-        assert_eq!(
-            multiline_context.to_string(),
-            "--add-context must be a single line."
-        );
     }
 }

@@ -388,8 +388,7 @@ async fn creation_seeds_once_and_reopened_stores_do_not_scan_or_reuse_ids() {
     use pwf_wire::task::{AddTask, AddTaskBody};
 
     use crate::{
-        clock::LocalClock, database, obsidian::ObsidianStore,
-        task_marker_section_store::SqliteTaskMarkerSectionStore,
+        clock::LocalClock, database, obsidian::ObsidianStore, user_settings::TomlSettingsStore,
     };
     let directory = tempfile::tempdir().unwrap();
     let tasks = directory.path().join("tasks");
@@ -419,24 +418,24 @@ async fn creation_seeds_once_and_reopened_stores_do_not_scan_or_reuse_ids() {
         .await
         .unwrap();
     let store = ObsidianStore::new(HomeDirectory::new(directory.path().to_path_buf()));
-    let marker_sections = SqliteTaskMarkerSectionStore::new(pool.clone());
+    let settings = TomlSettingsStore::new(None);
     let command = || AddTask::new(id("FOO"), AddTaskBody::from_shorthand("Create a task"));
     let scans = crate::obsidian::task_directory_scan_count();
-    let result = add_task::execute(command(), &store, &projects, &LocalClock, &marker_sections)
+    let result = add_task::execute(command(), &store, &projects, &LocalClock, &settings)
         .await
         .unwrap();
     assert_eq!(result.outcome.as_ref(), "FOO-0006");
     assert_eq!(crate::obsidian::task_directory_scan_count() - scans, 1);
     std::fs::remove_file(tasks.join("FOO-0006.md")).unwrap();
-    drop((store, projects, marker_sections));
+    drop((store, projects));
     pool.close().await;
 
     let pool = database::build_pool(&database).await.unwrap();
     let projects = SqliteProjectStore::new(pool.clone());
     let store = ObsidianStore::new(HomeDirectory::new(directory.path().to_path_buf()));
-    let marker_sections = SqliteTaskMarkerSectionStore::new(pool.clone());
+    let settings = TomlSettingsStore::new(None);
     let scans = crate::obsidian::task_directory_scan_count();
-    let result = add_task::execute(command(), &store, &projects, &LocalClock, &marker_sections)
+    let result = add_task::execute(command(), &store, &projects, &LocalClock, &settings)
         .await
         .unwrap();
     assert_eq!(result.outcome.as_ref(), "FOO-0007");
@@ -445,11 +444,11 @@ async fn creation_seeds_once_and_reopened_stores_do_not_scan_or_reuse_ids() {
     // Publishing fails after reservation; the subsequent create still advances.
     std::fs::create_dir(tasks.join("FOO-0008.md")).unwrap();
     assert!(
-        add_task::execute(command(), &store, &projects, &LocalClock, &marker_sections)
+        add_task::execute(command(), &store, &projects, &LocalClock, &settings)
             .await
             .is_err()
     );
-    let result = add_task::execute(command(), &store, &projects, &LocalClock, &marker_sections)
+    let result = add_task::execute(command(), &store, &projects, &LocalClock, &settings)
         .await
         .unwrap();
     assert_eq!(result.outcome.as_ref(), "FOO-0009");
@@ -471,7 +470,7 @@ async fn creation_seeds_once_and_reopened_stores_do_not_scan_or_reuse_ids() {
         .advance_task_sequence(&project.id, highest.as_ref())
         .await
         .unwrap();
-    let result = add_task::execute(command(), &store, &projects, &LocalClock, &marker_sections)
+    let result = add_task::execute(command(), &store, &projects, &LocalClock, &settings)
         .await
         .unwrap();
     assert_eq!(result.outcome.as_ref(), "FOO-0101");

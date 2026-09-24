@@ -232,6 +232,109 @@ async fn v1_get_user_settings_rejects_invalid_config_with_its_path_and_cause() -
 }
 
 #[tokio::test]
+async fn task_body_sections_follow_project_presets_and_shape_created_bodies() -> anyhow::Result<()>
+{
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    server.add_project_and_task().await?;
+    let config_path = server.root.path().join("config.toml");
+    let sections = |response: pb::GetTaskBodySectionsResponse| {
+        response
+            .sections
+            .into_iter()
+            .map(|section| {
+                (
+                    section.marker,
+                    section.header,
+                    section.heading_level,
+                    section.item_style,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let global = server
+        .client
+        .task()
+        .get_task_body_sections(pb::GetTaskBodySectionsRequest { project_id: None })
+        .await?;
+    assert_eq!(global.preset, "default");
+    assert_eq!(
+        sections(global)
+            .into_iter()
+            .map(|(marker, ..)| marker)
+            .collect::<Vec<_>>(),
+        ["/g", "/c", "/n", "/d"]
+    );
+
+    std::fs::write(&config_path, "[task_body.projects]\nfoo = \"alt\"\n")?;
+    let project = server
+        .client
+        .task()
+        .get_task_body_sections(pb::GetTaskBodySectionsRequest {
+            project_id: Some("foo".to_string()),
+        })
+        .await?;
+    assert_eq!(project.preset, "alt");
+    assert_eq!(
+        sections(project),
+        [
+            (
+                "/g".to_string(),
+                "Goals".to_string(),
+                1,
+                pb::TaskBodyItemStyle::Bullet as i32
+            ),
+            (
+                "/c".to_string(),
+                "Context".to_string(),
+                2,
+                pb::TaskBodyItemStyle::Paragraph as i32
+            ),
+        ]
+    );
+    let created = server
+        .client
+        .task()
+        .create_task(pb::CreateTaskRequest {
+            project_id: "FOO".to_string(),
+            shorthand: "alt task / first goal /c first context / second context".to_string(),
+            ..Default::default()
+        })
+        .await?;
+    let task = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest { id: created.id })
+        .await?;
+    assert_eq!(
+        task.body.as_ref().trim(),
+        "# Goals\n\n- first goal\n\n## Context\n\nfirst context\n\nsecond context"
+    );
+
+    for (project_id, expected) in [("MISS", Code::NotFound), ("foo-bar", Code::InvalidArgument)] {
+        let error = server
+            .client
+            .task()
+            .get_task_body_sections(pb::GetTaskBodySectionsRequest {
+                project_id: Some(project_id.to_string()),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), expected);
+    }
+    std::fs::write(&config_path, "[task_body]\npreset = \"missing\"\n")?;
+    let error = server
+        .client
+        .task()
+        .get_task_body_sections(pb::GetTaskBodySectionsRequest { project_id: None })
+        .await
+        .unwrap_err();
+    let status = rpc_status(error)?;
+    assert_eq!(status.code(), Code::FailedPrecondition);
+    assert!(status.message().contains("missing"), "{status:?}");
+    server.finish().await
+}
+
+#[tokio::test]
 async fn list_defaults_apply_to_rpc_filters_order_and_pagination() -> anyhow::Result<()> {
     let server = TestServer::start(TEST_TIMEOUT).await?;
     let absent = server.add_project_and_task().await?;
@@ -399,17 +502,7 @@ impl TestServer {
             .task()
             .create_task(pb::CreateTaskRequest {
                 project_id: "FOO".to_string(),
-                body: Some(pb::create_task_request::Body::Structured(
-                    pb::StructuredTaskBody {
-                        title: title.to_string(),
-                        sections: Some(pb::TaskMarkerSections {
-                            goals: vec!["exercise the real server".to_string()],
-                            context: Vec::new(),
-                            constraints: Vec::new(),
-                            done_when: Vec::new(),
-                        }),
-                    },
-                )),
+                shorthand: format!("{title} / exercise the real server"),
                 blocked_by: Vec::new(),
                 effort: None,
                 tags: Vec::new(),
@@ -633,17 +726,7 @@ async fn v1_create_task_returns_the_committed_task_summary() -> anyhow::Result<(
     )
     .create_task(Request::new(pb::CreateTaskRequest {
         project_id: "FOO".to_string(),
-        body: Some(pb::create_task_request::Body::Structured(
-            pb::StructuredTaskBody {
-                title: "task summary".to_string(),
-                sections: Some(pb::TaskMarkerSections {
-                    goals: vec!["return the committed task summary".to_string()],
-                    context: Vec::new(),
-                    constraints: Vec::new(),
-                    done_when: Vec::new(),
-                }),
-            },
-        )),
+        shorthand: "task summary / return the committed task summary".to_string(),
         blocked_by: Vec::new(),
         effort: None,
         tags: Vec::new(),
@@ -703,17 +786,7 @@ async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
         .task()
         .create_task(pb::CreateTaskRequest {
             project_id: "FOO".to_string(),
-            body: Some(pb::create_task_request::Body::Structured(
-                pb::StructuredTaskBody {
-                    title: "dependent task".to_string(),
-                    sections: Some(pb::TaskMarkerSections {
-                        goals: vec!["exercise the DAG endpoint".to_string()],
-                        context: Vec::new(),
-                        constraints: Vec::new(),
-                        done_when: Vec::new(),
-                    }),
-                },
-            )),
+            shorthand: "dependent task / exercise the DAG endpoint".to_string(),
             blocked_by: vec![blocker_id],
             effort: None,
             tags: Vec::new(),
@@ -791,17 +864,7 @@ async fn v1_repeated_requests_apply_each_create_and_append() -> anyhow::Result<(
     let original_id = server.add_project_and_task().await?;
     let create = pb::CreateTaskRequest {
         project_id: "FOO".to_string(),
-        body: Some(pb::create_task_request::Body::Structured(
-            pb::StructuredTaskBody {
-                title: "repeated task".to_string(),
-                sections: Some(pb::TaskMarkerSections {
-                    goals: vec!["exercise independent mutations".to_string()],
-                    context: Vec::new(),
-                    constraints: Vec::new(),
-                    done_when: Vec::new(),
-                }),
-            },
-        )),
+        shorthand: "repeated task / exercise independent mutations".to_string(),
         blocked_by: Vec::new(),
         effort: None,
         tags: Vec::new(),
@@ -1186,12 +1249,7 @@ async fn task_index_observes_server_writes_and_refreshes_external_edits() -> any
         .update_task(pb::UpdateTaskRequest {
             id: id.clone(),
             content: Some(pb::TaskContentEdit {
-                content: Some(pb::task_content_edit::Content::Structured(
-                    pb::StructuredTaskEdit {
-                        title: Some("server title".into()),
-                        ..Default::default()
-                    },
-                )),
+                content: Some(pb::task_content_edit::Content::Title("server title".into())),
             }),
             ..Default::default()
         })
@@ -1365,9 +1423,7 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
         .task()
         .create_task(pb::CreateTaskRequest {
             project_id: "FOO".to_string(),
-            body: Some(pb::create_task_request::Body::Shorthand(
-                "bounded collection".to_string(),
-            )),
+            shorthand: "bounded collection".to_string(),
             blocked_by: Vec::new(),
             effort: None,
             tags: (0..65).map(|index| format!("tag-{index}")).collect(),
@@ -2271,15 +2327,7 @@ async fn project_operations_require_ids_and_report_missing_projects() -> anyhow:
             .task()
             .create_task(pb::CreateTaskRequest {
                 project_id: project_id.to_string(),
-                body: Some(pb::create_task_request::Body::Structured(
-                    pb::StructuredTaskBody {
-                        title: "rejected task".to_string(),
-                        sections: Some(pb::TaskMarkerSections {
-                            goals: vec!["require an ID".to_string()],
-                            ..Default::default()
-                        }),
-                    },
-                )),
+                shorthand: "rejected task / require an ID".to_string(),
                 ..Default::default()
             })
             .await

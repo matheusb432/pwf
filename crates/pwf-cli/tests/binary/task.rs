@@ -113,8 +113,18 @@ fn add_and_edit_short_options_persist_task_metadata() {
 }
 
 #[test]
-fn machine_add_maps_each_explicit_value_without_parsing_marker_sections() {
+fn shorthand_add_renders_the_project_preset_and_sections_describes_it() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .write_user_config(concat!(
+            "[task_body.projects]\nfoo = \"prompt\"\n",
+            "[task_body.presets.prompt]\nsections = [\n",
+            "  { marker = \"/g\", title = \"Goals\", level = 3, items = \"numbered\" },\n",
+            "  { marker = \"/c\", title = \"Context\", level = 4, items = \"paragraph\" },\n",
+            "]\n",
+        ))
+        .unwrap();
 
     fixture
         .database
@@ -123,18 +133,7 @@ fn machine_add_maps_each_explicit_value_without_parsing_marker_sections() {
             "task",
             "add",
             "foo",
-            "--title",
-            "Web: UI fixes; keep #123 and \"quotes\"",
-            "--goal",
-            "preserve the authored goal",
-            "--goal",
-            "keep /d as literal text",
-            "--context",
-            "the machine supplies independent values",
-            "--constraint",
-            "preserve shorthand mode",
-            "--done-when",
-            "both input modes are covered",
+            "Web: UI fixes; keep #123 and \"quotes\" / first goal / second goal /c why it matters / what exists",
         ])
         .assert()
         .success()
@@ -144,7 +143,52 @@ fn machine_add_maps_each_explicit_value_without_parsing_marker_sections() {
     assert_eq!(task["title"], "Web: UI fixes; keep #123 and \"quotes\"");
     assert_eq!(
         task["body"],
-        "## Goals\n\n- preserve the authored goal\n- keep /d as literal text\n\n## Context\n\n- the machine supplies independent values\n\n## Constraints\n\n- preserve shorthand mode\n\n## Done When\n\n- both input modes are covered"
+        "### Goals\n\n1. first goal\n2. second goal\n\n#### Context\n\nwhy it matters\n\nwhat exists"
+    );
+
+    fixture
+        .database
+        .command()
+        .args(["task", "sections", "foo"])
+        .assert()
+        .success()
+        .stdout(concat!(
+            "Preset: prompt\n\n",
+            "/g  ### Goals     numbered\n",
+            "/c  #### Context  paragraph\n\n",
+            "Text before the first marker is the title. `/` starts another item in the current section; text after it goes to the first section until a marker selects another.\n",
+        ))
+        .stderr("");
+    let global = fixture
+        .database
+        .command()
+        .args(["task", "sections", "--json"])
+        .output()
+        .unwrap();
+    assert!(global.status.success());
+    let global: serde_json::Value = serde_json::from_slice(&global.stdout).unwrap();
+    assert_eq!(global["preset"], "default");
+    assert_eq!(
+        global["sections"][3],
+        serde_json::json!({
+            "marker": "/d",
+            "header": "Done When",
+            "heading_level": 2,
+            "item_style": "bullet",
+        })
+    );
+
+    let missing = fixture
+        .database
+        .command()
+        .args(["task", "sections", "miss"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+    assert!(
+        String::from_utf8(missing.stderr).unwrap().contains("MISS"),
+        "missing project"
     );
 }
 
@@ -177,10 +221,7 @@ fn list_priority_filters_and_renders_the_selected_tier() {
             .args([
                 "add",
                 "foo",
-                "--title",
-                title,
-                "--goal",
-                "exercise priority listing",
+                format!("{title} / exercise priority listing").as_str(),
                 "--priority",
                 priority,
             ])
@@ -217,14 +258,7 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
     fixture
         .database
         .command()
-        .args([
-            "add",
-            "foo",
-            "--title",
-            "orange task",
-            "--goal",
-            "render the configured color",
-        ])
+        .args(["add", "foo", "orange task / render the configured color"])
         .assert()
         .success();
     fixture
@@ -294,7 +328,7 @@ fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
 }
 
 #[test]
-fn root_edit_replaces_marker_sections_with_explicit_remove_then_add_actions() {
+fn root_edit_replaces_or_appends_shorthand_body_content() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
@@ -303,16 +337,7 @@ fn root_edit_replaces_marker_sections_with_explicit_remove_then_add_actions() {
             "task",
             "add",
             "foo",
-            "--title",
-            "original task",
-            "--goal",
-            "old goal",
-            "--context",
-            "old context",
-            "--constraint",
-            "old constraint",
-            "--done-when",
-            "old outcome",
+            "original task / old goal /c old context /n old constraint /d old outcome",
         ])
         .assert()
         .success();
@@ -323,29 +348,36 @@ fn root_edit_replaces_marker_sections_with_explicit_remove_then_add_actions() {
         .args([
             "edit",
             "FOO-0001",
-            "--title",
-            "[WIP]: Edited task; keep #456",
-            "--remove-goals",
-            "--add-goal",
-            "new goal /c stays literal",
-            "--remove-contexts",
-            "--add-context",
-            "new context",
-            "--remove-constraints",
-            "--add-constraint",
-            "new constraint",
-            "--remove-done-whens",
-            "--add-done-when",
-            "new outcome",
+            "--replace-body",
+            "[WIP]: Edited task; keep #456 / new goal /d new outcome",
         ])
         .assert()
         .success();
-
     let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
     assert_eq!(task["title"], "[WIP]: Edited task; keep #456");
     assert_eq!(
         task["body"],
-        "## Goals\n\n- new goal /c stays literal\n\n## Context\n\n- new context\n\n## Constraints\n\n- new constraint\n\n## Done When\n\n- new outcome"
+        "## Goals\n\n- new goal\n\n## Done When\n\n- new outcome"
+    );
+
+    fixture
+        .database
+        .command()
+        .args([
+            "edit",
+            "FOO-0001",
+            "-a",
+            "second goal /c some new context",
+            "--title",
+            "appended task",
+        ])
+        .assert()
+        .success();
+    let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
+    assert_eq!(task["title"], "appended task");
+    assert_eq!(
+        task["body"],
+        "## Goals\n\n- new goal\n- second goal\n\n## Done When\n\n- new outcome\n\n## Context\n\n- some new context"
     );
 }
 
@@ -460,10 +492,7 @@ fn task_dag_render_fixture() -> ManagedProject {
             "task",
             "add",
             "foo",
-            "--title",
-            "prepare graph data",
-            "--goal",
-            "supply the dependency",
+            "prepare graph data / supply the dependency",
         ])
         .assert()
         .success();
@@ -480,10 +509,7 @@ fn task_dag_render_fixture() -> ManagedProject {
             "task",
             "add",
             "foo",
-            "--title",
-            "cancel obsolete renderer",
-            "--goal",
-            "preserve cancelled task output",
+            "cancel obsolete renderer / preserve cancelled task output",
         ])
         .assert()
         .success();
@@ -506,10 +532,7 @@ fn task_dag_render_fixture() -> ManagedProject {
             "task",
             "add",
             "foo",
-            "--title",
-            "render graph view",
-            "--goal",
-            "show the dependency",
+            "render graph view / show the dependency",
             "--blocked-by",
             "FOO-0001",
             "--blocked-by",
@@ -535,18 +558,21 @@ fn invalid_argument_combinations_fail_before_mutation() {
         vec![
             "edit",
             "FOO-0001",
-            "--body",
+            "--replace-body",
             "replacement / goal",
-            "--add-goal",
+            "--append-body",
             "ambiguous",
         ],
         vec![
             "edit",
             "FOO-0001",
-            "--append",
-            "more / goal",
-            "--remove-goals",
+            "--replace-body",
+            "replacement / goal",
+            "--title",
+            "ambiguous",
         ],
+        vec!["edit", "FOO-0001", "--add-goal", "removed flag"],
+        vec!["edit", "FOO-0001", "--body", "renamed flag"],
         vec!["edit", "FOO-0001", "--effort", "high", "--remove-effort"],
         vec![
             "edit",
@@ -558,9 +584,8 @@ fn invalid_argument_combinations_fail_before_mutation() {
         vec!["edit", "FOO-0001"],
         vec!["task", "clone"],
         vec!["task", "get"],
-        vec!["task", "add", "--title", "missing project"],
-        vec!["add", "foo", "shorthand", "--title", "explicit"],
-        vec!["add", "foo", "--goal", "missing title"],
+        vec!["task", "add", "foo", "--title", "removed flag"],
+        vec!["add", "foo", "--goal", "removed flag"],
         vec!["note", "edit", "foo", "1"],
         vec![
             "note",
@@ -613,14 +638,7 @@ fn remove_confirmation_identifies_closed_status_before_deletion() {
     fixture
         .database
         .command()
-        .args([
-            "add",
-            "foo",
-            "--title",
-            "completed work",
-            "--goal",
-            "remove completed work",
-        ])
+        .args(["add", "foo", "completed work / remove completed work"])
         .assert()
         .success();
     fixture
@@ -671,10 +689,7 @@ fn configured_list_page_size_applies_to_every_list_spelling() -> anyhow::Result<
             .args([
                 "add",
                 "foo",
-                "--title",
-                title,
-                "--goal",
-                "exercise list limits",
+                format!("{title} / exercise list limits").as_str(),
             ])
             .assert()
             .success();
@@ -732,14 +747,8 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
         ("alpha", Some("highest"), Some("low")),
         ("beta", None, None),
     ] {
-        let mut arguments = vec![
-            "add",
-            "foo",
-            "--title",
-            title,
-            "--goal",
-            "exercise list ordering",
-        ];
+        let shorthand = format!("{title} / exercise list ordering");
+        let mut arguments = vec!["add", "foo", shorthand.as_str()];
         if let Some(priority) = priority {
             arguments.extend(["--priority", priority]);
         }
@@ -839,15 +848,7 @@ fn task_mutations_print_one_summary_line() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     for (args, expected) in [
         (
-            vec![
-                "task",
-                "add",
-                "foo",
-                "--title",
-                "first title",
-                "--goal",
-                "exercise confirmations",
-            ],
+            vec!["task", "add", "foo", "first title / exercise confirmations"],
             "Added task: FOO-0001 :: first title\n",
         ),
         (
@@ -901,10 +902,7 @@ fn task_mutations_use_configured_lifecycle_colors() {
                 "task",
                 "add",
                 "foo",
-                "--title",
-                "colored task",
-                "--goal",
-                "exercise confirmations",
+                "colored task / exercise confirmations",
             ],
             "Added",
             color_rgb(1, 2, 3),
@@ -914,7 +912,7 @@ fn task_mutations_use_configured_lifecycle_colors() {
                 "task",
                 "edit",
                 "FOO-0001",
-                "--add-goal",
+                "--append-body",
                 "preserve the title",
             ],
             "Edited",
@@ -978,10 +976,7 @@ fn project_ids_ignore_title_collisions_and_exclude_paused_projects() {
                 "task",
                 "add",
                 id,
-                "--title",
-                "selected task",
-                "--goal",
-                "use the exact project ID",
+                "selected task / use the exact project ID",
             ])
             .success_stdout();
         assert!(
@@ -1019,15 +1014,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
-        .command_args(&[
-            "task",
-            "add",
-            "foo",
-            "--title",
-            "format task",
-            "--goal",
-            "render in the CLI",
-        ])
+        .command_args(&["task", "add", "foo", "format task / render in the CLI"])
         .success_stdout();
     let path = fixture
         .database
@@ -1116,10 +1103,7 @@ fn clone_routes_project_ids_and_preserves_authored_content() {
             "task",
             "add",
             "foo",
-            "--title",
-            "original task",
-            "--goal",
-            "keep /d literal",
+            "original task / keep /d literal",
             "--tag",
             "rust",
             "--effort",
@@ -1201,10 +1185,7 @@ fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_snapshots() -> an
                 "task",
                 "add",
                 "foo",
-                "--title",
-                "repeated input",
-                "--goal",
-                "persist each task file",
+                "repeated input / persist each task file",
             ])?;
             assert!(added.contains(id), "{added}");
             assert!(tasks.join(format!("{id}.md")).exists());
@@ -1350,15 +1331,7 @@ fn backlog_is_hidden_by_default_and_retains_its_color_when_edited() {
     fixture
         .database
         .command()
-        .args([
-            "task",
-            "add",
-            "foo",
-            "--title",
-            "deferred work",
-            "--goal",
-            "do this later",
-        ])
+        .args(["task", "add", "foo", "deferred work / do this later"])
         .assert()
         .success();
     let id = task_id("FOO-0001").unwrap();
@@ -1445,15 +1418,7 @@ fn activate_from_backlog_and_already_active_need_no_confirmation() {
     fixture
         .database
         .command()
-        .args([
-            "task",
-            "add",
-            "foo",
-            "--title",
-            "ready later",
-            "--goal",
-            "work later",
-        ])
+        .args(["task", "add", "foo", "ready later / work later"])
         .assert()
         .success();
     fixture
@@ -1497,9 +1462,7 @@ fn closed_task_activation_requires_confirmation_before_removing_data() {
     fixture
         .database
         .command()
-        .args([
-            "task", "add", "foo", "--title", "finished", "--goal", "ship",
-        ])
+        .args(["task", "add", "foo", "finished / ship"])
         .assert()
         .success();
     fixture

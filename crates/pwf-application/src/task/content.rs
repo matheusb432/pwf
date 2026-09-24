@@ -1,20 +1,14 @@
 //! Applies body, section, and report transforms to task file bodies.
 
+use std::fmt::Write as _;
+
 use lazy_regex::{Regex, regex};
 use pulldown_cmark::{Event, Parser, Tag};
-use pwf_marker_sections::ParsedMarkerSections;
 use pwf_models::task::TaskBody;
-use pwf_wire::task::{TaskMarkerSection, TaskMarkerSectionEdits};
 
-use super::marker_sections::TaskMarkerSections;
+use super::body_presets::{MarkerSectionDefinition, MarkerSectionItemStyle, TaskBodyPreset};
 
 const REPORT_SEPARATOR: &str = "\n\n### Report\n\n";
-const TASK_MARKER_SECTIONS: [TaskMarkerSection; 4] = [
-    TaskMarkerSection::Goal,
-    TaskMarkerSection::Context,
-    TaskMarkerSection::Constraint,
-    TaskMarkerSection::DoneWhen,
-];
 
 fn placeholder_body_regex() -> &'static Regex {
     regex!(r"(?i)(^\s*\[!\]\s*TODO\b|^\s*TODO\b|definir prompt|define prompt|tbd)")
@@ -33,18 +27,18 @@ enum ExplicitEmptySections {
 }
 
 #[must_use]
-pub(in crate::task) fn render_for_creation(body: &str, sections: &TaskMarkerSections) -> String {
-    render_shorthand(body, sections, ExplicitEmptySections::Render)
+pub(in crate::task) fn render_for_creation(body: &str, preset: &TaskBodyPreset) -> String {
+    render_shorthand(body, preset, ExplicitEmptySections::Render)
 }
 
 #[must_use]
-pub(in crate::task) fn render_for_replacement(body: &str, sections: &TaskMarkerSections) -> String {
-    render_shorthand(body, sections, ExplicitEmptySections::Omit)
+pub(in crate::task) fn render_for_replacement(body: &str, preset: &TaskBodyPreset) -> String {
+    render_shorthand(body, preset, ExplicitEmptySections::Omit)
 }
 
 fn render_shorthand(
     body: &str,
-    sections: &TaskMarkerSections,
+    preset: &TaskBodyPreset,
     explicit_empty_sections: ExplicitEmptySections,
 ) -> String {
     match body_classification(body) {
@@ -52,32 +46,13 @@ fn render_shorthand(
             body.to_string()
         }
         BodyClassification::Authored => {
-            let parsed = sections.parse(body);
+            let parsed = preset.parse(body);
             match explicit_empty_sections {
-                ExplicitEmptySections::Render => sections.render(&parsed),
-                ExplicitEmptySections::Omit => {
-                    let (title, section_items) = parsed.into_parts();
-                    sections.render(&ParsedMarkerSections::new(title, section_items))
-                }
+                ExplicitEmptySections::Render => preset.render(&parsed),
+                ExplicitEmptySections::Omit => preset.render(&parsed.omit_empty_sections()),
             }
         }
     }
-}
-
-#[must_use]
-pub(in crate::task) fn render_marker_sections(
-    task_sections: &pwf_wire::task::TaskMarkerSections,
-    configuration: &TaskMarkerSections,
-) -> String {
-    configuration.render(&ParsedMarkerSections::new(
-        String::new(),
-        [
-            task_sections.goals().to_vec(),
-            task_sections.context().to_vec(),
-            task_sections.constraints().to_vec(),
-            task_sections.done_when().to_vec(),
-        ],
-    ))
 }
 
 /// Reports whether a body is empty or matches `TODO`, `[!] TODO`, the legacy `define prompt` or
@@ -116,157 +91,44 @@ fn starts_with_todo_word_boundary_ascii(text: &str) -> bool {
     })
 }
 
-/// Splices section bullets into existing sections and appends missing sections.
+/// Splices shorthand items into existing sections and appends missing sections.
+///
+/// Items continue the style of a section's last block; empty and new sections use the preset.
 #[must_use]
 pub(in crate::task) fn append_marker_sections(
     body: &str,
     shorthand: &str,
-    configuration: &TaskMarkerSections,
+    preset: &TaskBodyPreset,
 ) -> String {
     let shorthand = shorthand.trim();
     debug_assert!(!shorthand.is_empty(), "task append bodies are validated");
-    let (title, mut sections) = configuration.parse(shorthand).into_parts();
+    let (title, mut sections) = preset.parse(shorthand).into_parts();
     if !title.is_empty() {
         sections[0].insert(0, title);
     }
     let mut out = body.to_string();
-    for (section, bullets) in TASK_MARKER_SECTIONS.into_iter().zip(&sections) {
-        out = append_bullets_to_section(&out, configuration.header(section), bullets);
+    for (section, items) in preset.sections().iter().zip(&sections) {
+        out = append_items_to_section(&out, section, items);
     }
     out
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub(in crate::task) enum EditMarkerSectionsError {
-    #[error("task body contains more than one `{header}` section")]
-    DuplicateSection { header: String },
-}
-
-pub(in crate::task) fn edit_marker_sections(
-    body: &str,
-    edits: &TaskMarkerSectionEdits,
-    configuration: &TaskMarkerSections,
-) -> Result<Option<String>, EditMarkerSectionsError> {
-    reject_duplicate_marker_sections(body, configuration)?;
-    let mut edited = body.to_string();
-
-    for section in TASK_MARKER_SECTIONS {
-        if edits.removals().contains(&section) {
-            edited = clear_marker_section(&edited, section, configuration);
-        }
-    }
-
-    for (section, values) in [
-        (TaskMarkerSection::Goal, edits.additions().goals()),
-        (TaskMarkerSection::Context, edits.additions().context()),
-        (
-            TaskMarkerSection::Constraint,
-            edits.additions().constraints(),
-        ),
-        (TaskMarkerSection::DoneWhen, edits.additions().done_when()),
-    ] {
-        if !values.is_empty() {
-            edited = add_marker_section_values(&edited, section, values, configuration);
-        }
-    }
-
-    Ok((edited != body).then_some(edited))
-}
-
-fn reject_duplicate_marker_sections(
-    body: &str,
-    configuration: &TaskMarkerSections,
-) -> Result<(), EditMarkerSectionsError> {
-    for section in TASK_MARKER_SECTIONS {
-        let header = configuration.header(section);
-        if header_bounds(body, header).nth(1).is_some() {
-            return Err(EditMarkerSectionsError::DuplicateSection {
-                header: markdown_header(header),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn clear_marker_section(
-    body: &str,
-    section: TaskMarkerSection,
-    configuration: &TaskMarkerSections,
-) -> String {
-    let header = configuration.header(section);
-    let Some((header_start, header_end)) = header_bounds(body, header).next() else {
-        return if section == TaskMarkerSection::Goal {
-            insert_marker_section(body, section, &[], configuration)
-        } else {
-            body.to_string()
-        };
-    };
-    let section_end = section_end(body, header_end);
-    let replacement = (section == TaskMarkerSection::Goal).then(|| markdown_header(header));
-    replace_region(body, header_start, section_end, replacement.as_deref())
-}
-
-fn add_marker_section_values(
-    body: &str,
-    section: TaskMarkerSection,
-    values: &[String],
-    configuration: &TaskMarkerSections,
-) -> String {
-    let header = configuration.header(section);
-    if header_bounds(body, header).next().is_none() {
-        insert_marker_section(body, section, values, configuration)
-    } else {
-        append_bullets_to_section(body, header, values)
-    }
-}
-
-fn insert_marker_section(
-    body: &str,
-    section: TaskMarkerSection,
-    values: &[String],
-    configuration: &TaskMarkerSections,
-) -> String {
-    let insertion_offset = TASK_MARKER_SECTIONS
-        .into_iter()
-        .filter(|candidate| marker_section_index(*candidate) > marker_section_index(section))
-        .flat_map(|candidate| header_bounds(body, configuration.header(candidate)))
-        .map(|(start, _)| start)
-        .min()
-        .unwrap_or(body.len());
-    let mut inserted = markdown_header(configuration.header(section));
-    for (index, value) in values.iter().enumerate() {
-        inserted.push_str(if index == 0 { "\n\n- " } else { "\n- " });
-        inserted.push_str(value);
-    }
-    replace_region(body, insertion_offset, insertion_offset, Some(&inserted))
-}
-
-fn replace_region(body: &str, start: usize, end: usize, replacement: Option<&str>) -> String {
-    let before = body[..start].trim_end_matches('\n');
-    let after = body[end..].trim_start_matches('\n');
-    let mut parts = Vec::with_capacity(3);
-    if !before.is_empty() {
-        parts.push(before);
-    }
-    if let Some(replacement) = replacement {
-        parts.push(replacement.trim_matches('\n'));
-    }
-    if !after.is_empty() {
-        parts.push(after);
-    }
-    parts.join("\n\n")
 }
 
 fn header_bounds<'a>(
     content: &'a str,
     header: &'a str,
 ) -> impl Iterator<Item = (usize, usize)> + 'a {
-    heading_bounds(content).filter(move |&(start, end)| {
-        content[start..end]
-            .strip_prefix("## ")
-            .and_then(|line| line.strip_prefix(header))
-            .is_some_and(|rest| rest.trim().is_empty())
-    })
+    heading_bounds(content)
+        .filter(move |&(start, end)| atx_heading_text(&content[start..end]) == Some(header))
+}
+
+/// Returns the trimmed text of an ATX heading line at any level.
+fn atx_heading_text(line: &str) -> Option<&str> {
+    let text = line.trim_start_matches('#');
+    let level = line.len() - text.len();
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+    text.strip_prefix([' ', '\t']).map(str::trim)
 }
 
 fn heading_bounds(content: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
@@ -299,26 +161,38 @@ fn section_end(content: &str, header_end: usize) -> usize {
             .map_or(rest.len(), |(start, _)| start)
 }
 
-fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) -> String {
-    if bullets.is_empty() {
+fn append_items_to_section(
+    content: &str,
+    section: &MarkerSectionDefinition,
+    items: &[String],
+) -> String {
+    if items.is_empty() {
         return content.to_string();
     }
-    let Some((_, header_end)) = header_bounds(content, header).next() else {
+    let Some((_, header_end)) = header_bounds(content, section.header()).next() else {
         let mut out = content.trim_end().to_string();
         out.push_str("\n\n");
-        out.push_str("## ");
-        out.push_str(header);
-        append_bullets(&mut out, bullets, "\n\n- ");
+        for _ in 0..section.heading_level().get() {
+            out.push('#');
+        }
+        out.push(' ');
+        out.push_str(section.header());
+        append_items(
+            &mut out,
+            ItemContinuation::configured(section.item_style()),
+            items,
+            true,
+        );
         out.push('\n');
         return out;
     };
     let section_end = section_end(content, header_end);
     let before = content[..section_end].trim_end_matches('\n');
     let after = content[section_end..].trim_start_matches('\n');
+    let (continuation, starts_new_block) =
+        ItemContinuation::detect(&content[header_end..section_end], section.item_style());
     let mut out = before.to_string();
-    let section_is_empty = content[header_end..section_end].trim().is_empty();
-    let first_separator = if section_is_empty { "\n\n- " } else { "\n- " };
-    append_bullets(&mut out, bullets, first_separator);
+    append_items(&mut out, continuation, items, starts_new_block);
     if after.is_empty() {
         out.push('\n');
     } else {
@@ -328,28 +202,157 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
     out
 }
 
-fn append_bullets(out: &mut String, bullets: &[String], first_separator: &'static str) {
-    let mut separator = first_separator;
-    for bullet in bullets {
-        out.push_str(separator);
-        out.push_str(bullet);
-        separator = "\n- ";
+/// Describes how appended items continue a section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ItemContinuation {
+    Bullet { marker: char },
+    Numbered { next_number: u64, delimiter: char },
+    Paragraph,
+}
+
+impl ItemContinuation {
+    const fn configured(item_style: MarkerSectionItemStyle) -> Self {
+        match item_style {
+            MarkerSectionItemStyle::Bullet => Self::Bullet { marker: '-' },
+            MarkerSectionItemStyle::Numbered => Self::Numbered {
+                next_number: 1,
+                delimiter: '.',
+            },
+            MarkerSectionItemStyle::Paragraph => Self::Paragraph,
+        }
+    }
+
+    /// Follows the section's last top-level list or paragraph, or the configured style when it
+    /// has neither. The returned flag reports whether appended items start a new block.
+    fn detect(section_content: &str, item_style: MarkerSectionItemStyle) -> (Self, bool) {
+        let scan = ItemBlockScan::scan(section_content);
+        let list_item_source = |first_item_start: Option<usize>| {
+            first_item_start.map_or("", |start| section_content[start..].trim_start())
+        };
+        let continuation = match scan.last_item_block {
+            None => Self::configured(item_style),
+            Some(ItemBlock::Paragraph) => Self::Paragraph,
+            Some(ItemBlock::List {
+                first_number: None,
+                first_item_start,
+                ..
+            }) => Self::Bullet {
+                marker: list_item_source(first_item_start)
+                    .chars()
+                    .next()
+                    .unwrap_or('-'),
+            },
+            Some(ItemBlock::List {
+                first_number: Some(first_number),
+                item_count,
+                first_item_start,
+            }) => Self::Numbered {
+                next_number: first_number + item_count,
+                delimiter: list_item_source(first_item_start)
+                    .trim_start_matches(|character: char| character.is_ascii_digit())
+                    .chars()
+                    .next()
+                    .unwrap_or('.'),
+            },
+        };
+        (continuation, !scan.item_block_is_last)
     }
 }
 
-fn markdown_header(header: &str) -> String {
-    let mut markdown = String::with_capacity("## ".len() + header.len());
-    markdown.push_str("## ");
-    markdown.push_str(header);
-    markdown
+/// Describes one top-level block that can hold section items.
+enum ItemBlock {
+    Paragraph,
+    List {
+        first_number: Option<u64>,
+        item_count: u64,
+        first_item_start: Option<usize>,
+    },
 }
 
-const fn marker_section_index(section: TaskMarkerSection) -> usize {
-    match section {
-        TaskMarkerSection::Goal => 0,
-        TaskMarkerSection::Context => 1,
-        TaskMarkerSection::Constraint => 2,
-        TaskMarkerSection::DoneWhen => 3,
+/// Records a section's last top-level list or paragraph and whether any other block follows it.
+struct ItemBlockScan {
+    last_item_block: Option<ItemBlock>,
+    item_block_is_last: bool,
+}
+
+impl ItemBlockScan {
+    fn scan(section_content: &str) -> Self {
+        let mut scan = Self {
+            last_item_block: None,
+            item_block_is_last: false,
+        };
+        let mut depth = 0_usize;
+        for (event, range) in Parser::new(section_content).into_offset_iter() {
+            match event {
+                Event::Start(tag) => {
+                    scan.observe_start(depth, &tag, range.start);
+                    depth += 1;
+                }
+                Event::End(_) => depth -= 1,
+                _ => {}
+            }
+        }
+        scan
+    }
+
+    fn observe_start(&mut self, depth: usize, tag: &Tag<'_>, start: usize) {
+        match (depth, tag) {
+            (0, Tag::Paragraph) => {
+                self.last_item_block = Some(ItemBlock::Paragraph);
+                self.item_block_is_last = true;
+            }
+            (0, Tag::List(first_number)) => {
+                self.last_item_block = Some(ItemBlock::List {
+                    first_number: *first_number,
+                    item_count: 0,
+                    first_item_start: None,
+                });
+                self.item_block_is_last = true;
+            }
+            (0, _) => self.item_block_is_last = false,
+            (1, Tag::Item) => {
+                if let Some(ItemBlock::List {
+                    item_count,
+                    first_item_start,
+                    ..
+                }) = &mut self.last_item_block
+                {
+                    *item_count += 1;
+                    first_item_start.get_or_insert(start);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn append_items(
+    out: &mut String,
+    continuation: ItemContinuation,
+    items: &[String],
+    starts_new_block: bool,
+) {
+    for (index, item) in (0_u64..).zip(items) {
+        let list_separator = if index == 0 && starts_new_block {
+            "\n\n"
+        } else {
+            "\n"
+        };
+        match continuation {
+            ItemContinuation::Bullet { marker } => {
+                out.push_str(list_separator);
+                out.push(marker);
+                out.push(' ');
+            }
+            ItemContinuation::Numbered {
+                next_number,
+                delimiter,
+            } => {
+                let _ = write!(out, "{list_separator}{}{delimiter} ", next_number + index);
+            }
+            ItemContinuation::Paragraph => out.push_str("\n\n"),
+        }
+        out.push_str(item);
     }
 }
 
@@ -383,8 +386,37 @@ mod tests {
 
     const S: &str = "\n\n";
 
+    fn preset(name: &str) -> TaskBodyPreset {
+        super::super::body_presets::TaskBodyPresets::try_new(Vec::new(), Some(name), Vec::new())
+            .unwrap()
+            .selected()
+            .clone()
+    }
+
+    fn custom_preset(sections: &[(&str, &str, u8, MarkerSectionItemStyle)]) -> TaskBodyPreset {
+        TaskBodyPreset::try_new(
+            "custom",
+            sections
+                .iter()
+                .map(|(marker, header, heading_level, item_style)| {
+                    MarkerSectionDefinition::try_new(
+                        *marker,
+                        *header,
+                        super::super::body_presets::MarkerSectionHeadingLevel::try_new(
+                            *heading_level,
+                        )
+                        .unwrap(),
+                        *item_style,
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap()
+    }
+
     fn render(raw: &str) -> String {
-        super::render_for_creation(raw, &TaskMarkerSections::default_fixture())
+        super::render_for_creation(raw, &preset("default"))
     }
 
     fn is_placeholder_body(raw: &str) -> bool {
@@ -392,7 +424,7 @@ mod tests {
     }
 
     fn append_marker_sections(body: &str, raw: &str) -> String {
-        super::append_marker_sections(body, raw, &TaskMarkerSections::default_fixture())
+        super::append_marker_sections(body, raw, &preset("default"))
     }
 
     #[test]
@@ -505,36 +537,78 @@ mod tests {
     }
 
     #[test]
-    fn section_edits_preserve_markdown_examples() {
-        let configuration = TaskMarkerSections::default_fixture();
-        for example in [
-            "```markdown\n## Context\nexample\n```",
-            "~~~\n## Context\nexample\n~~~",
-            "    ## Context\n    example",
-            "> ## Context\n> example",
+    fn append_preserves_markdown_examples_inside_sections() {
+        // Indented lines after a list item continue that item, so the list stays open.
+        for (example, goal_separator) in [
+            ("```markdown\n## Context\nexample\n```", "\n\n"),
+            ("~~~\n## Context\nexample\n~~~", "\n\n"),
+            ("    ## Context\n    example", "\n"),
+            ("> ## Context\n> example", "\n\n"),
         ] {
-            let original = format!("## Goals\n\n- keep\n\n{example}");
-            let edits = TaskMarkerSectionEdits::new(
-                pwf_wire::task::TaskMarkerSections::default(),
-                [TaskMarkerSection::Context],
-            );
+            let body = format!("## Goals\n\n- keep\n\n{example}\n\n## Context\n\n- old");
             assert_eq!(
-                edit_marker_sections(&original, &edits, &configuration).unwrap(),
-                None
-            );
-            let body = format!("{original}\n\n## Context\n\n- old");
-            assert_eq!(
-                edit_marker_sections(&body, &edits, &configuration)
-                    .unwrap()
-                    .unwrap(),
-                original,
-            );
-            let appended = super::append_marker_sections(&body, "new goal", &configuration);
-            assert_eq!(
-                appended,
-                format!("## Goals\n\n- keep\n\n{example}\n- new goal\n\n## Context\n\n- old")
+                append_marker_sections(&body, "new goal /c new context"),
+                format!(
+                    "## Goals\n\n- keep\n\n{example}{goal_separator}- new goal\n\n## Context\n\n- old\n- new context\n"
+                )
             );
         }
+    }
+
+    #[test]
+    fn built_in_alt_preset_renders_level_one_goals_and_paragraph_context() {
+        assert_eq!(
+            super::render_for_creation(
+                "title / first goal / second goal /c first context / second context",
+                &preset("alt")
+            ),
+            format!(
+                "# Goals{S}- first goal\n- second goal{S}## Context{S}first context{S}second context"
+            )
+        );
+    }
+
+    #[test]
+    fn append_finds_sections_at_any_heading_level() {
+        assert_eq!(
+            append_marker_sections("#### Goals\n\n- one\n\n# Context\n\n- old", "two /c new"),
+            "#### Goals\n\n- one\n- two\n\n# Context\n\n- old\n- new\n"
+        );
+    }
+
+    #[test]
+    fn append_continues_the_existing_item_style() {
+        let preset = custom_preset(&[
+            ("/g", "Goals", 3, MarkerSectionItemStyle::Numbered),
+            ("/c", "Context", 3, MarkerSectionItemStyle::Paragraph),
+            ("/n", "Notes", 3, MarkerSectionItemStyle::Bullet),
+        ]);
+        let body =
+            "### Goals\n\n1. one\n2. two\n\n### Context\n\n- legacy bullet\n\n### Notes\n\nprose";
+        assert_eq!(
+            super::append_marker_sections(body, "three / four /c added /n more", &preset),
+            "### Goals\n\n1. one\n2. two\n3. three\n4. four\n\n### Context\n\n- legacy bullet\n- added\n\n### Notes\n\nprose\n\nmore\n"
+        );
+        assert_eq!(
+            super::append_marker_sections("### Goals\n\n7) seven", "eight", &preset),
+            "### Goals\n\n7) seven\n8) eight\n"
+        );
+        assert_eq!(
+            super::append_marker_sections("### Goals\n\n* star", "next", &preset),
+            "### Goals\n\n* star\n* next\n"
+        );
+    }
+
+    #[test]
+    fn append_uses_the_configured_style_for_empty_and_missing_sections() {
+        let preset = custom_preset(&[
+            ("/g", "Goals", 3, MarkerSectionItemStyle::Numbered),
+            ("/c", "Context", 4, MarkerSectionItemStyle::Paragraph),
+        ]);
+        assert_eq!(
+            super::append_marker_sections("### Goals\n", "one / two /c first / second", &preset),
+            "### Goals\n\n1. one\n2. two\n\n#### Context\n\nfirst\n\nsecond\n"
+        );
     }
 
     #[test]

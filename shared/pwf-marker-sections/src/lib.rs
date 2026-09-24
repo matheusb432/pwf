@@ -10,6 +10,7 @@ pub use adapters::{Adapter, MarkdownAdapter};
 pub use configuration::{
     MARKER_SECTION_HEADER_CHARACTER_LIMIT, MarkerSectionConfiguration,
     MarkerSectionConfigurationError, MarkerSectionDefinition, MarkerSectionDefinitionError,
+    MarkerSectionHeadingLevel, MarkerSectionHeadingLevelError, MarkerSectionItemStyle,
 };
 pub use marker_sections::{ITEM_MARKER, parse};
 pub use model::ParsedMarkerSections;

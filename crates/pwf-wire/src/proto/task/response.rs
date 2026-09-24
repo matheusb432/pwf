@@ -161,6 +161,29 @@ impl From<task::TaskRecord> for pb::GetTaskRecordResponse {
 }
 
 /// Encodes a bounded native task DAG into its Protobuf response.
+impl From<task::TaskBodySections> for pb::GetTaskBodySectionsResponse {
+    fn from(sections: task::TaskBodySections) -> Self {
+        Self {
+            preset: sections.preset,
+            sections: sections
+                .sections
+                .into_iter()
+                .map(|section| pb::TaskBodySection {
+                    marker: section.marker,
+                    header: section.header,
+                    heading_level: u32::from(section.heading_level),
+                    item_style: match section.item_style {
+                        task::TaskBodyItemStyle::Bullet => pb::TaskBodyItemStyle::Bullet,
+                        task::TaskBodyItemStyle::Numbered => pb::TaskBodyItemStyle::Numbered,
+                        task::TaskBodyItemStyle::Paragraph => pb::TaskBodyItemStyle::Paragraph,
+                    }
+                    .into(),
+                })
+                .collect(),
+        }
+    }
+}
+
 #[must_use]
 pub fn get_task_dag_response(graph: task::TaskDag) -> pb::GetTaskDagResponse {
     let (root_id, nodes, edges) = graph.into_parts();

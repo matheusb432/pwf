@@ -3,16 +3,17 @@ pub mod add_task;
 pub mod add_task_from_file;
 pub mod backlog_task;
 mod blocked_by;
+pub mod body_presets;
 pub mod cancel_task;
 pub mod clone_task;
 pub mod complete_task;
 mod content;
 pub mod edit_task;
 pub mod get_task;
+pub mod get_task_body_sections;
 pub mod get_task_dag;
 pub mod get_task_record;
 pub mod list_tasks;
-mod marker_sections;
 pub mod read_task_dependencies;
 pub mod remove_task;
 pub mod resolve_task_project;
@@ -20,13 +21,12 @@ pub mod session;
 mod task_closure;
 mod task_projection;
 
-pub use marker_sections::{TaskMarkerSectionRow, TaskMarkerSections, TaskMarkerSectionsError};
 pub use task_closure::CloseTaskError;
 
 /// Reports a shorthand body without a usable leading task title.
 #[derive(Debug, thiserror::Error)]
 pub enum TaskBodyTitleError {
-    #[error("--body must start with a nonempty title before any section marker.")]
+    #[error("task body shorthand must start with a nonempty title before any section marker.")]
     Missing,
     #[error(transparent)]
     Invalid(#[from] pwf_models::task::TaskTitleError),
@@ -34,9 +34,9 @@ pub enum TaskBodyTitleError {
 
 fn infer_task_title(
     body: &str,
-    sections: &marker_sections::TaskMarkerSections,
+    preset: &body_presets::TaskBodyPreset,
 ) -> Result<pwf_models::task::TaskTitle, TaskBodyTitleError> {
-    let (title, _) = sections.parse(body).into_parts();
+    let (title, _) = preset.parse(body).into_parts();
     if title.is_empty() {
         return Err(TaskBodyTitleError::Missing);
     }

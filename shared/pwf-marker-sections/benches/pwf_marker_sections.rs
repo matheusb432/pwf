@@ -3,7 +3,7 @@ use std::{hint::black_box, time::Duration};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use pwf_marker_sections::{
     Adapter as _, MarkdownAdapter, MarkerSectionConfiguration, MarkerSectionDefinition,
-    ParsedMarkerSections, parse,
+    MarkerSectionHeadingLevel, MarkerSectionItemStyle, ParsedMarkerSections, parse,
 };
 
 const SAMPLE_SIZE: usize = 20;
@@ -26,7 +26,7 @@ fn pwf_marker_sections(criterion: &mut Criterion) {
 
 fn benchmark_parse(
     criterion: &mut Criterion,
-    configuration: &MarkerSectionConfiguration<4>,
+    configuration: &MarkerSectionConfiguration,
     cases: &[BodyCase<'_>],
 ) {
     let mut group = criterion.benchmark_group("pwf-marker-sections/parse");
@@ -45,7 +45,7 @@ fn benchmark_parse(
 
 fn benchmark_render_markdown(
     criterion: &mut Criterion,
-    configuration: &MarkerSectionConfiguration<4>,
+    configuration: &MarkerSectionConfiguration,
     cases: &[BodyCase<'_>],
 ) {
     let parsed = cases
@@ -73,7 +73,7 @@ fn benchmark_render_markdown(
 
 fn benchmark_parse_and_render(
     criterion: &mut Criterion,
-    configuration: &MarkerSectionConfiguration<4>,
+    configuration: &MarkerSectionConfiguration,
     cases: &[BodyCase<'_>],
 ) {
     let mut group = criterion.benchmark_group("pwf-marker-sections/parse-and-render");
@@ -85,7 +85,7 @@ fn benchmark_parse_and_render(
 
 fn benchmark_parse_and_render_case(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    configuration: &MarkerSectionConfiguration<4>,
+    configuration: &MarkerSectionConfiguration,
     case: &BodyCase<'_>,
 ) {
     group.throughput(Throughput::Bytes(case.body.len() as u64));
@@ -98,31 +98,36 @@ fn benchmark_parse_and_render_case(
     );
 }
 
-fn parse_and_render(body: &str, configuration: &MarkerSectionConfiguration<4>) -> String {
+fn parse_and_render(body: &str, configuration: &MarkerSectionConfiguration) -> String {
     MarkdownAdapter::new(configuration).render(&parse(body, configuration))
 }
 
-fn configuration() -> MarkerSectionConfiguration<4> {
-    require_configuration(MarkerSectionConfiguration::try_new([
-        require_section(MarkerSectionDefinition::try_new("/g", "Goals")),
-        require_section(MarkerSectionDefinition::try_new("/c", "Context")),
-        require_section(MarkerSectionDefinition::try_new("/n", "Constraints")),
-        require_section(MarkerSectionDefinition::try_new("/d", "Done When")),
+fn configuration() -> MarkerSectionConfiguration {
+    require_configuration(MarkerSectionConfiguration::try_new(vec![
+        require_section("/g", "Goals", MarkerSectionItemStyle::Numbered),
+        require_section("/c", "Context", MarkerSectionItemStyle::Paragraph),
+        require_section("/n", "Constraints", MarkerSectionItemStyle::Bullet),
+        require_section("/d", "Done When", MarkerSectionItemStyle::Bullet),
     ]))
 }
 
 fn require_section(
-    result: Result<MarkerSectionDefinition, pwf_marker_sections::MarkerSectionDefinitionError>,
+    marker: &str,
+    header: &str,
+    item_style: MarkerSectionItemStyle,
 ) -> MarkerSectionDefinition {
-    result.unwrap_or_else(|error| benchmark_configuration_error(&error))
+    let heading_level = MarkerSectionHeadingLevel::try_new(2)
+        .unwrap_or_else(|error| benchmark_configuration_error(&error));
+    MarkerSectionDefinition::try_new(marker, header, heading_level, item_style)
+        .unwrap_or_else(|error| benchmark_configuration_error(&error))
 }
 
 fn require_configuration(
     result: Result<
-        MarkerSectionConfiguration<4>,
+        MarkerSectionConfiguration,
         pwf_marker_sections::MarkerSectionConfigurationError,
     >,
-) -> MarkerSectionConfiguration<4> {
+) -> MarkerSectionConfiguration {
     result.unwrap_or_else(|error| benchmark_configuration_error(&error))
 }
 
@@ -161,7 +166,7 @@ impl<'body> BodyCase<'body> {
 
 struct ParsedCase {
     name: &'static str,
-    body: ParsedMarkerSections<4>,
+    body: ParsedMarkerSections,
 }
 
 criterion_group! {

@@ -5,8 +5,8 @@ use pwf_wire::task::{AddTask, AddTaskBody, AddTaskFromFile, TaskMutationResult};
 
 use super::add_task::{self, AddTaskError};
 use crate::ports::{
-    clock::Clock, project_store::ProjectStore, task_marker_section_store::TaskMarkerSectionStore,
-    task_source_file::TaskSourceFileReader, task_vault::TaskVault,
+    clock::Clock, project_store::ProjectStore, task_source_file::TaskSourceFileReader,
+    task_vault::TaskVault, user_settings::TaskBodyPresetReader,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -32,7 +32,7 @@ pub async fn execute(
     store: &impl TaskVault,
     project_store: &impl ProjectStore,
     clock: &impl Clock,
-    marker_section_store: &impl TaskMarkerSectionStore,
+    preset_reader: &impl TaskBodyPresetReader,
 ) -> Result<TaskMutationResult<TaskId>, AddTaskFromFileError> {
     let AddTaskFromFile {
         project_id,
@@ -54,7 +54,7 @@ pub async fn execute(
         store,
         project_store,
         clock,
-        marker_section_store,
+        preset_reader,
     )
     .await
     .map_err(Into::into)

@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use pwf_models::settings::UserSettings;
 
+use crate::task::body_presets::TaskBodyPresets;
+
 /// A readable settings file did not represent a supported configuration.
 #[derive(Debug, thiserror::Error)]
 #[error("user settings at {} are invalid: {source}", path.display())]
@@ -35,4 +37,9 @@ pub enum UserSettingsLoadError {
 /// Loads validated user-settings snapshots.
 pub trait UserSettingsReader: Clone + Send + Sync + 'static {
     fn load(&self) -> Result<UserSettings, UserSettingsLoadError>;
+}
+
+/// Loads validated task-body presets from the same settings snapshot as [`UserSettingsReader`].
+pub trait TaskBodyPresetReader: Send + Sync + 'static {
+    fn load_task_body_presets(&self) -> Result<TaskBodyPresets, UserSettingsLoadError>;
 }

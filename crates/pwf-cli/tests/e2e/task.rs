@@ -110,14 +110,7 @@ fn task_lifecycle_is_observable_through_json() {
     fixture
         .database
         .command()
-        .args([
-            "add",
-            "foo",
-            "--title",
-            "blocker",
-            "--goal",
-            "blocking work",
-        ])
+        .args(["add", "foo", "blocker / blocking work"])
         .assert()
         .success();
     fixture
@@ -126,10 +119,7 @@ fn task_lifecycle_is_observable_through_json() {
         .args([
             "add",
             "foo",
-            "--title",
-            "just done",
-            "--goal",
-            "complete the work",
+            "just done / complete the work",
             "--blocked-by",
             "FOO-0001",
             "--effort",
@@ -160,7 +150,7 @@ fn task_lifecycle_is_observable_through_json() {
         .args([
             "edit",
             "FOO-0002",
-            "--body",
+            "--replace-body",
             "ship it / preserve the revised goal",
             "--remove-tags",
             "--add-tag",

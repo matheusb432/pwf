@@ -3,13 +3,20 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use pwf_application::ports::{
-    clock::Clock,
-    project_directory::ProjectDirectoryClient,
-    project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
-    task_vault::{
-        NullablePatch, TaskDependencyRecord, TaskGraphRecord, TaskGraphSnapshot, TaskInsertion,
-        TaskMutationError, TaskPatch, TaskRevisionState, TaskVault, TaskWrite, TaskWriteSet,
+use pwf_application::{
+    ports::{
+        clock::Clock,
+        project_directory::ProjectDirectoryClient,
+        project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
+        task_vault::{
+            NullablePatch, TaskDependencyRecord, TaskGraphRecord, TaskGraphSnapshot, TaskInsertion,
+            TaskMutationError, TaskPatch, TaskRevisionState, TaskVault, TaskWrite, TaskWriteSet,
+        },
+        user_settings::{TaskBodyPresetReader, UserSettingsLoadError},
+    },
+    task::body_presets::{
+        MarkerSectionDefinition, MarkerSectionHeadingLevel, MarkerSectionItemStyle, TaskBodyPreset,
+        TaskBodyPresets,
     },
 };
 use pwf_models::{
@@ -29,6 +36,69 @@ mod fixtures;
 
 pub(crate) use database::{MIGRATOR, insert_project, insert_unrelated_invalid_project};
 pub(crate) use fixtures::{blocked_by, stored_blocked_by, task_record, task_timestamp};
+
+/// Serves one fixed task-body preset snapshot.
+#[derive(Clone)]
+pub(crate) struct FixedTaskBodyPresets(TaskBodyPresets);
+
+impl Default for FixedTaskBodyPresets {
+    fn default() -> Self {
+        Self(TaskBodyPresets::try_new(Vec::new(), None, Vec::new()).unwrap())
+    }
+}
+
+impl FixedTaskBodyPresets {
+    /// Selects one user preset built from `(marker, header, heading level, item style)` rows.
+    pub(crate) fn selecting(sections: &[(&str, &str, u8, MarkerSectionItemStyle)]) -> Self {
+        Self(
+            TaskBodyPresets::try_new(vec![custom_preset(sections)], Some("custom"), Vec::new())
+                .unwrap(),
+        )
+    }
+
+    /// Selects one user preset only for `project_id`, keeping the built-in global default.
+    pub(crate) fn for_project(
+        project_id: &str,
+        sections: &[(&str, &str, u8, MarkerSectionItemStyle)],
+    ) -> Self {
+        Self(
+            TaskBodyPresets::try_new(
+                vec![custom_preset(sections)],
+                None,
+                vec![(
+                    ProjectId::try_new(project_id).unwrap(),
+                    "custom".to_string(),
+                )],
+            )
+            .unwrap(),
+        )
+    }
+}
+
+fn custom_preset(sections: &[(&str, &str, u8, MarkerSectionItemStyle)]) -> TaskBodyPreset {
+    TaskBodyPreset::try_new(
+        "custom",
+        sections
+            .iter()
+            .map(|(marker, header, heading_level, item_style)| {
+                MarkerSectionDefinition::try_new(
+                    *marker,
+                    *header,
+                    MarkerSectionHeadingLevel::try_new(*heading_level).unwrap(),
+                    *item_style,
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
+impl TaskBodyPresetReader for FixedTaskBodyPresets {
+    fn load_task_body_presets(&self) -> Result<TaskBodyPresets, UserSettingsLoadError> {
+        Ok(self.0.clone())
+    }
+}
 
 pub(crate) fn project_note(number: u32, title: impl AsRef<str>) -> ProjectNote {
     ProjectNote {

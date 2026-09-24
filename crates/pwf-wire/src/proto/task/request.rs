@@ -15,7 +15,6 @@ use super::super::{collection_edit, invalid, parse, required};
 use crate::{patch_field::PatchField, pb, task};
 
 const TASK_COLLECTION_VALUES_MAX: usize = 64;
-const TASK_MARKER_SECTION_VALUES_MAX: usize = 128;
 
 impl TryFrom<pb::BacklogTaskRequest> for TaskId {
     type Error = Status;
@@ -32,33 +31,19 @@ pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTa
         TASK_COLLECTION_VALUES_MAX,
     )?;
     ensure_count("tags", request.tags.len(), TASK_COLLECTION_VALUES_MAX)?;
-    if let Some(pb::create_task_request::Body::Structured(body)) = request.body.as_ref() {
-        ensure_sections("body.sections", body.sections.as_ref(), 0)?;
-    }
 
     let pb::CreateTaskRequest {
         project_id,
-        body,
+        shorthand,
         blocked_by,
         effort,
         tags,
         priority,
     } = request;
 
-    let body = match required("body", body)? {
-        pb::create_task_request::Body::Shorthand(value) => task::AddTaskBody::from_shorthand(value),
-        pb::create_task_request::Body::Structured(value) => {
-            let title =
-                TaskTitle::try_new(value.title).map_err(|error| invalid("body.title", error))?;
-            task::AddTaskBody::from_structured(
-                title,
-                task_marker_sections(value.sections.unwrap_or_default())?,
-            )
-        }
-    };
     Ok(task::AddTask {
         project_id: ProjectId::try_new(project_id).map_err(|error| invalid("project_id", error))?,
-        body,
+        body: task::AddTaskBody::from_shorthand(shorthand),
         blocked_by: blocked_by_values(blocked_by)?,
         effort: effort.map(effort_tier).transpose()?,
         tags: task_tag_values(tags)?,
@@ -174,6 +159,21 @@ impl TryFrom<pb::GetTaskRecordRequest> for TaskId {
     }
 }
 
+impl TryFrom<pb::GetTaskBodySectionsRequest> for task::GetTaskBodySections {
+    type Error = Status;
+
+    fn try_from(request: pb::GetTaskBodySectionsRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
+            project_id: request
+                .project_id
+                .map(|project_id| {
+                    ProjectId::try_new(project_id).map_err(|error| invalid("project_id", error))
+                })
+                .transpose()?,
+        })
+    }
+}
+
 pub fn get_task_dag_request(request: pb::GetTaskDagRequest) -> Result<task::GetTaskDag, Status> {
     let pb::GetTaskDagRequest {
         id,
@@ -269,25 +269,9 @@ pub fn activate_task_start(start: pb::ActivateTaskStart) -> Result<task::Activat
 
 fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent, Status> {
     match required("content", edit.content)? {
-        pb::task_content_edit::Content::Structured(value) => {
-            let title = value
-                .title
-                .map(TaskTitle::try_new)
-                .transpose()
-                .map_err(|error| invalid("content.title", error))?
-                .into();
-            let additions = task_marker_sections(value.additions.unwrap_or_default())?;
-            let removals = value
-                .removals
-                .into_iter()
-                .map(task_marker_section)
-                .collect::<Result<Vec<task::TaskMarkerSection>, _>>()?;
-            task::EditTaskContent::structured(
-                title,
-                task::TaskMarkerSectionEdits::new(additions, removals),
-            )
-            .map_err(|error| invalid("content", error))
-        }
+        pb::task_content_edit::Content::Title(value) => TaskTitle::try_new(value)
+            .map(task::EditTaskContent::title)
+            .map_err(|error| invalid("content.title", error)),
         pb::task_content_edit::Content::Append(value) => {
             let title = value
                 .title
@@ -302,18 +286,6 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
             Ok(task::EditTaskContent::replace_shorthand(value))
         }
     }
-}
-
-fn task_marker_sections(
-    sections: pb::TaskMarkerSections,
-) -> Result<task::TaskMarkerSections, Status> {
-    task::TaskMarkerSections::try_new(
-        sections.goals,
-        sections.context,
-        sections.constraints,
-        sections.done_when,
-    )
-    .map_err(|error| invalid("sections", error))
 }
 
 fn effort_tier(value: i32) -> Result<EffortTier, Status> {
@@ -394,18 +366,6 @@ fn priority_edit(value: Option<pb::PriorityEdit>) -> Result<PatchField<PriorityT
     }
 }
 
-fn task_marker_section(value: i32) -> Result<task::TaskMarkerSection, Status> {
-    match pb::TaskMarkerSection::try_from(value).ok() {
-        Some(pb::TaskMarkerSection::Goal) => Ok(task::TaskMarkerSection::Goal),
-        Some(pb::TaskMarkerSection::Context) => Ok(task::TaskMarkerSection::Context),
-        Some(pb::TaskMarkerSection::Constraint) => Ok(task::TaskMarkerSection::Constraint),
-        Some(pb::TaskMarkerSection::DoneWhen) => Ok(task::TaskMarkerSection::DoneWhen),
-        Some(pb::TaskMarkerSection::Unspecified) | None => {
-            Err(invalid("section", "must be specified"))
-        }
-    }
-}
-
 fn blocked_by_values(values: Vec<String>) -> Result<Option<BlockedBy>, Status> {
     if values.is_empty() {
         return Ok(None);
@@ -443,15 +403,6 @@ fn revision(value: String) -> Result<ContentRevision, Status> {
 }
 
 fn ensure_update_bounds(request: &pb::UpdateTaskRequest) -> Result<(), Status> {
-    if let Some(content) = request.content.as_ref()
-        && let Some(pb::task_content_edit::Content::Structured(edit)) = content.content.as_ref()
-    {
-        ensure_sections(
-            "content.sections",
-            edit.additions.as_ref(),
-            edit.removals.len(),
-        )?;
-    }
     ensure_count(
         "blocked_by",
         collection_value_count(request.blocked_by.as_ref()),
@@ -461,26 +412,6 @@ fn ensure_update_bounds(request: &pb::UpdateTaskRequest) -> Result<(), Status> {
         "tags",
         collection_value_count(request.tags.as_ref()),
         TASK_COLLECTION_VALUES_MAX,
-    )
-}
-
-fn ensure_sections(
-    field: &str,
-    sections: Option<&pb::TaskMarkerSections>,
-    additional: usize,
-) -> Result<(), Status> {
-    let count = sections.map_or(0, |sections| {
-        sections
-            .goals
-            .len()
-            .saturating_add(sections.context.len())
-            .saturating_add(sections.constraints.len())
-            .saturating_add(sections.done_when.len())
-    });
-    ensure_count(
-        field,
-        count.saturating_add(additional),
-        TASK_MARKER_SECTION_VALUES_MAX,
     )
 }
 

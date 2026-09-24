@@ -3,8 +3,8 @@ use pwf_wire::task::{AddTask, AddTaskBody, CloneTask, ClonedTaskProjectId, TaskM
 
 use crate::{
     ports::{
-        clock::Clock, project_store::ProjectStore,
-        task_marker_section_store::TaskMarkerSectionStore, task_vault::TaskVault,
+        clock::Clock, project_store::ProjectStore, task_vault::TaskVault,
+        user_settings::TaskBodyPresetReader,
     },
     task::{
         add_task::{self, AddTaskError},
@@ -26,7 +26,7 @@ pub async fn execute(
     store: &impl TaskVault,
     project_store: &impl ProjectStore,
     clock: &impl Clock,
-    marker_section_store: &impl TaskMarkerSectionStore,
+    preset_reader: &impl TaskBodyPresetReader,
 ) -> Result<TaskMutationResult<TaskId>, CloneTaskError> {
     let CloneTask { id, project_id } = command;
     let project_id = match project_id {
@@ -47,7 +47,7 @@ pub async fn execute(
         store,
         project_store,
         clock,
-        marker_section_store,
+        preset_reader,
     )
     .await?)
 }

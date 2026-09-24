@@ -1,17 +1,31 @@
-use pwf_application::task::{
-    TaskBodyTitleError, TaskMarkerSectionsError,
-    add_task::{self, AddTaskError},
+use pwf_application::{
+    ports::user_settings::{
+        TaskBodyPresetReader, UserSettingsConfigurationError, UserSettingsLoadError,
+    },
+    task::{
+        TaskBodyTitleError,
+        add_task::{self, AddTaskError},
+        body_presets::{MarkerSectionItemStyle, TaskBodyPresets},
+    },
 };
-use pwf_models::task::{TaskStatus, TaskTitle};
-use pwf_wire::task::{AddTask, AddTaskBody, TaskMarkerSections, TaskMutationSummary};
+use pwf_models::task::TaskStatus;
+use pwf_wire::task::{AddTask, AddTaskBody, TaskMutationSummary};
 
 use crate::support::{
-    FixedClock, InMemoryStore, InMemoryStoreFailure, blocked_by, insert_project, stored_blocked_by,
-    task_record, task_timestamp,
+    FixedClock, FixedTaskBodyPresets, InMemoryStore, InMemoryStoreFailure, blocked_by,
+    insert_project, stored_blocked_by, task_record, task_timestamp,
 };
 
-fn task_title(raw: &str) -> TaskTitle {
-    TaskTitle::try_new(raw).unwrap()
+struct InvalidTaskBodyPresets;
+
+impl TaskBodyPresetReader for InvalidTaskBodyPresets {
+    fn load_task_body_presets(&self) -> Result<TaskBodyPresets, UserSettingsLoadError> {
+        Err(UserSettingsConfigurationError::new(
+            "config.toml".into(),
+            anyhow::anyhow!("unknown task body preset"),
+        )
+        .into())
+    }
 }
 
 async fn registered_store(pool: &sqlx::SqlitePool) -> InMemoryStore {
@@ -23,16 +37,7 @@ fn command() -> AddTask {
     let source_id = "FOO-0001".parse::<pwf_models::task::TaskId>().unwrap();
     AddTask::new(
         source_id.project_id(),
-        AddTaskBody::from_structured(
-            task_title("ship it"),
-            TaskMarkerSections::try_new(
-                vec!["do the thing".to_string()],
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            )
-            .unwrap(),
-        ),
+        AddTaskBody::from_shorthand("ship it / do the thing"),
     )
 }
 
@@ -45,7 +50,7 @@ async fn add_inserts_task_file_and_returns_its_summary(pool: sqlx::SqlitePool) {
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();
@@ -68,28 +73,6 @@ async fn add_inserts_task_file_and_returns_its_summary(pool: sqlx::SqlitePool) {
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
-    let store = registered_store(&pool).await;
-    let mut command = command();
-    command.body =
-        AddTaskBody::from_structured(task_title("fix # metadata"), TaskMarkerSections::default());
-
-    let added = add_task::execute(
-        command,
-        &store,
-        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
-        &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(added.outcome.as_ref(), "FOO-0001");
-    assert_eq!(store.tasks("foo")[0].title, "fix # metadata");
-    assert_eq!(store.tasks("foo")[0].body, "## Goals\n");
-}
-
-#[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn shorthand_add_accepts_only_a_title_and_normalizes_it_once(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     let mut command = command();
@@ -100,7 +83,7 @@ async fn shorthand_add_accepts_only_a_title_and_normalizes_it_once(pool: sqlx::S
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();
@@ -114,23 +97,11 @@ async fn shorthand_add_accepts_only_a_title_and_normalizes_it_once(pool: sqlx::S
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn shorthand_add_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) {
+async fn shorthand_add_uses_the_configured_preset_layout(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
-    sqlx::query(
-        "UPDATE task_marker_sections SET marker = '/o', header = 'Objectives' WHERE section = 'goals'",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "UPDATE task_marker_sections SET marker = '/b', header = 'Background' WHERE section = 'context'",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
     let mut command = command();
     command.body = AddTaskBody::from_shorthand(
-        "custom title /o custom goal /b custom context /g fallback context",
+        "custom title /o first goal / second goal /b custom context /g fallback context",
     );
 
     add_task::execute(
@@ -138,7 +109,10 @@ async fn shorthand_add_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) 
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::selecting(&[
+            ("/o", "Objectives", 3, MarkerSectionItemStyle::Numbered),
+            ("/b", "Background", 4, MarkerSectionItemStyle::Paragraph),
+        ]),
     )
     .await
     .unwrap();
@@ -147,39 +121,7 @@ async fn shorthand_add_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) 
     assert_eq!(task.title, "custom title");
     assert_eq!(
         task.body,
-        "## Objectives\n\n- custom goal\n\n## Background\n\n- custom context\n- fallback context"
-    );
-}
-
-#[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn structured_add_renders_lane_values_without_shorthand_parsing(pool: sqlx::SqlitePool) {
-    let store = registered_store(&pool).await;
-    let mut command = command();
-    command.body = AddTaskBody::from_structured(
-        task_title("machine body"),
-        TaskMarkerSections::try_new(
-            vec!["keep /d literal".to_string()],
-            vec!["known context".to_string()],
-            Vec::new(),
-            Vec::new(),
-        )
-        .unwrap(),
-    );
-
-    let added = add_task::execute(
-        command,
-        &store,
-        &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
-        &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(added.outcome.as_ref(), "FOO-0001");
-    assert_eq!(
-        store.tasks("foo")[0].body,
-        "## Goals\n\n- keep /d literal\n\n## Context\n\n- known context"
+        "### Objectives\n\n1. first goal\n2. second goal\n\n#### Background\n\ncustom context\n\nfallback context"
     );
 }
 
@@ -194,7 +136,7 @@ async fn add_reports_a_blocked_by_id_from_an_unknown_project(pool: sqlx::SqliteP
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap_err();
@@ -229,7 +171,7 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();
@@ -255,7 +197,7 @@ async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sq
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap_err();
@@ -294,7 +236,7 @@ async fn add_uses_project_id_even_when_another_project_has_that_title(pool: sqlx
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();
@@ -332,7 +274,7 @@ async fn snapshots_only_reached_projects_once_including_paused_projects(pool: sq
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap_err();
@@ -356,7 +298,7 @@ async fn missing_projects_and_task_files_do_not_supply_dependencies(pool: sqlx::
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap_err();
@@ -380,7 +322,7 @@ async fn dependency_read_failures_keep_the_task_id_and_source(pool: sqlx::Sqlite
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap_err();
@@ -401,7 +343,7 @@ async fn seeded_configuration_preserves_the_current_markers_and_headers(pool: sq
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();
@@ -424,7 +366,7 @@ async fn shorthand_add_renders_explicit_empty_sections_once(pool: sqlx::SqlitePo
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();
@@ -437,7 +379,7 @@ async fn shorthand_add_renders_explicit_empty_sections_once(pool: sqlx::SqlitePo
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();
@@ -451,24 +393,20 @@ async fn shorthand_add_renders_explicit_empty_sections_once(pool: sqlx::SqlitePo
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn missing_lane_rejects_creation(pool: sqlx::SqlitePool) {
+async fn invalid_task_body_settings_reject_creation(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
-    sqlx::query("DELETE FROM task_marker_sections WHERE section = 'constraints'")
-        .execute(&pool)
-        .await
-        .unwrap();
     let error = add_task::execute(
         command(),
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &InvalidTaskBodyPresets,
     )
     .await
     .unwrap_err();
     assert!(matches!(
         error,
-        AddTaskError::MarkerSections(TaskMarkerSectionsError::InvalidSectionSet { .. })
+        AddTaskError::TaskBodyPresets(UserSettingsLoadError::InvalidConfiguration(_))
     ));
     assert!(store.tasks("foo").is_empty());
 }
@@ -484,7 +422,7 @@ async fn shorthand_still_requires_a_title(pool: sqlx::SqlitePool) {
             &store,
             &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
             &FixedClock,
-            &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+            &FixedTaskBodyPresets::default(),
         )
         .await
         .unwrap_err();
@@ -504,7 +442,7 @@ async fn repeated_creation_allocates_distinct_task_files(pool: sqlx::SqlitePool)
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();
@@ -513,7 +451,7 @@ async fn repeated_creation_allocates_distinct_task_files(pool: sqlx::SqlitePool)
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap();

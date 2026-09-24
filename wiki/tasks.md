@@ -14,11 +14,10 @@ Tasks are stored as Markdown with goals and optional context/constraints/done wh
 # shorthand, where `app` is the project ID
 pwf add app 'my title / my goal1 / my goal2 /c some context /n some constraint /d some done when'
 
-# explicit fields
-pwf task add app --title "my title" --goal "my goal1" --goal "my goal2" --context "some context" --constraint "some constraint" --done-when "some done when"
+pwf task sections app # markers and layout of the project's preset
 ```
 
-Both commands create a task like this in the project's task directory:
+This creates a task like this in the project's task directory:
 
 ```md
 ---
@@ -35,6 +34,15 @@ project: "my-app"
 - my goal2
 
 ...
+```
+
+Section markers, titles, heading levels and item styles come from `task_body` presets in the [user settings](../config/config.example.toml).
+
+## Editing
+
+```bash
+pwf task edit app1 -a 'my goal3 /c more context' # appends to each section
+pwf task edit app1 --replace-body 'new title / new goal' # replaces the title and body
 ```
 
 ## Reading and listing
@@ -78,7 +86,7 @@ pwf task clone app1 --project foo # creates in project with id="foo"
 Link a new task to direct blockers with `--blocked-by`:
 
 ```bash
-pwf task add app --title "ship feature" --blocked-by app1
+pwf task add app "ship feature" --blocked-by app1
 # Directed Acyclic Graph (DAG) view of the task's blockers and what is blocks:
 pwf task dag app2
 ```

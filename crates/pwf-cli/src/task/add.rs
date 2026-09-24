@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
 use pwf_client::{
-    pb::{CreateTaskRequest, EffortTier, PriorityTier, StructuredTaskBody, create_task_request},
+    pb::{CreateTaskRequest, EffortTier, PriorityTier},
     task::TaskClient,
 };
 use pwf_models::{
@@ -11,10 +11,9 @@ use pwf_models::{
 };
 
 use super::{
-    EffortChoice, MarkerSectionFlagMode, PriorityChoice,
+    EffortChoice, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
-    render::{TITLE_NORMALIZED_NOTICE, TaskMutationAction, render_mutation},
-    task_marker_sections, task_title,
+    render::{TaskMutationAction, render_mutation},
 };
 use crate::console::Console;
 
@@ -42,11 +41,10 @@ struct DirectArguments {
         required = true
     )]
     project: Option<ProjectId>,
-    /// Task body shorthand. Conflicts with marker-section-specific args.
+    /// Task body shorthand: a title, then items after `/` and section markers. See `pwf task
+    /// sections`.
     #[arg(value_name = "BODY")]
     body: Vec<String>,
-    #[command(flatten)]
-    structured: StructuredBody,
     /// Blocked-by task ID or [[ID]]; repeat or comma-separate for several
     #[arg(short = 'b', long)]
     blocked_by: Vec<BlockedByInput>,
@@ -60,26 +58,6 @@ struct DirectArguments {
     /// Scheduling priority tier.
     #[arg(short = 'p', long, value_enum)]
     priority: Option<PriorityChoice>,
-}
-
-#[derive(Args, Debug)]
-#[group(id = "structured_body", conflicts_with = "body", requires = "title")]
-struct StructuredBody {
-    /// Task's title
-    #[arg(long, required_unless_present = "body")]
-    pub(crate) title: Option<String>,
-    /// Goal. repeat for several. Requires `--title`
-    #[arg(long)]
-    pub(crate) goal: Vec<String>,
-    /// Context. repeat for several. Requires `--title`
-    #[arg(long)]
-    pub(crate) context: Vec<String>,
-    /// Constraint. repeat for several. Requires `--title`
-    #[arg(long)]
-    pub(crate) constraint: Vec<String>,
-    /// Done When. repeat for several. Requires `--title`
-    #[arg(long)]
-    pub(crate) done_when: Vec<String>,
 }
 
 pub(super) async fn run(
@@ -114,7 +92,7 @@ async fn run_direct(
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
 ) -> Result<String, crate::error::Error> {
-    let (body, title_normalized) = request_body(arguments)?;
+    let shorthand = request_shorthand(arguments)?;
     let project = arguments
         .project
         .as_ref()
@@ -123,7 +101,7 @@ async fn run_direct(
     let result = client
         .create_task(CreateTaskRequest {
             project_id: project_id.to_string(),
-            body: Some(body),
+            shorthand,
             blocked_by: blocked_by_input::collect(&arguments.blocked_by)
                 .map(|values| values.iter().map(ToString::to_string).collect())
                 .unwrap_or_default(),
@@ -145,47 +123,24 @@ async fn run_direct(
         })
         .await;
     match result {
-        Ok(added) => {
-            if title_normalized {
-                eprintln!("{TITLE_NORMALIZED_NOTICE}");
-            }
-            render_mutation(
-                TaskMutationAction::Added,
-                &added.id,
-                added.task.as_ref(),
-                task_status_colors,
-                console.color(),
-            )
-            .map_err(Into::into)
-        }
+        Ok(added) => render_mutation(
+            TaskMutationAction::Added,
+            &added.id,
+            added.task.as_ref(),
+            task_status_colors,
+            console.color(),
+        )
+        .map_err(Into::into),
         Err(error) => Err(error.into()),
     }
 }
 
-fn request_body(arguments: &DirectArguments) -> anyhow::Result<(create_task_request::Body, bool)> {
-    if let Some(title) = arguments.structured.title.as_deref() {
-        let (title, normalized) = task_title(title)?;
-        let sections = task_marker_sections(
-            &arguments.structured.goal,
-            &arguments.structured.context,
-            &arguments.structured.constraint,
-            &arguments.structured.done_when,
-            MarkerSectionFlagMode::Add,
-        )?;
-        return Ok((
-            create_task_request::Body::Structured(StructuredTaskBody {
-                title: title.to_string(),
-                sections: Some(sections),
-            }),
-            normalized,
-        ));
-    }
-
+fn request_shorthand(arguments: &DirectArguments) -> anyhow::Result<String> {
     let body = arguments.body.join(" ");
     if body.trim().is_empty() {
         return Err(anyhow::anyhow!(
-            "Use shorthand: pwf task add <project> \"<body>\"\nOr machine mode: pwf task add <project> --title <title> [marker-section flags]"
+            "Use shorthand: pwf task add <project> \"<body>\"\nRun `pwf task sections <project>` to see the section markers."
         ));
     }
-    Ok((create_task_request::Body::Shorthand(body), false))
+    Ok(body)
 }

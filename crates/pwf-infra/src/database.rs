@@ -205,25 +205,6 @@ mod tests {
                 .unwrap();
             assert_eq!(stored, enabled);
         }
-        assert!(
-            sqlx::query("UPDATE task_marker_sections SET marker = 'goal' WHERE section = 'goals'")
-                .execute(&pool)
-                .await
-                .is_err()
-        );
-        assert!(
-            sqlx::query(
-                "UPDATE task_marker_sections SET header = 'Context' WHERE section = 'goals'"
-            )
-            .execute(&pool)
-            .await
-            .is_err()
-        );
-        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_marker_sections")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 4);
         check_database_ready(&pool).await.unwrap();
     }
 }

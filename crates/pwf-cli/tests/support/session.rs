@@ -26,15 +26,7 @@ impl SessionFixture {
         database.add_directory_project(&project_id("FOO")?, "foo", &project_path, &notes);
         database
             .command()
-            .args([
-                "task",
-                "add",
-                "foo",
-                "--title",
-                "do the thing",
-                "--goal",
-                "do the thing",
-            ])
+            .args(["task", "add", "foo", "do the thing / do the thing"])
             .assert()
             .success();
 
@@ -66,7 +58,7 @@ impl SessionFixture {
     pub fn add_task(&self, title: &str) {
         self.database
             .command()
-            .args(["task", "add", "foo", "--title", title, "--goal", title])
+            .args(["task", "add", "foo", format!("{title} / {title}").as_str()])
             .assert()
             .success();
     }

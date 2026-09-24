@@ -14,6 +14,10 @@ use pwf_models::{
 
 use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
+mod body_sections;
+pub use body_sections::{
+    GetTaskBodySections, TaskBodyItemStyle, TaskBodySection, TaskBodySections,
+};
 mod dag;
 pub use dag::{
     GetTaskDag, TaskDag, TaskDagDepth, TaskDagDepthError, TaskDagEdge, TaskDagError, TaskDagMode,
@@ -30,184 +34,10 @@ mod record;
 pub use pwf_models::task::{Task, TaskListLimit, TaskListLimitError};
 pub use record::{RawTaskTags, StoredBlockedBy, TaskRecord, TaskRecordError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskMarkerSection {
-    Goal,
-    Context,
-    Constraint,
-    DoneWhen,
-}
-
-impl TaskMarkerSection {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Goal => "goal",
-            Self::Context => "context",
-            Self::Constraint => "constraint",
-            Self::DoneWhen => "done when",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TaskMarkerSectionValueError {
-    #[error("{} cannot be empty.", section.label())]
-    Empty { section: TaskMarkerSection },
-    #[error("{} must be a single line.", section.label())]
-    Multiline { section: TaskMarkerSection },
-}
-
-impl TaskMarkerSectionValueError {
-    #[must_use]
-    pub fn section(&self) -> TaskMarkerSection {
-        match self {
-            Self::Empty { section } | Self::Multiline { section } => *section,
-        }
-    }
-
-    #[must_use]
-    pub fn reason(&self) -> &'static str {
-        match self {
-            Self::Empty { .. } => "cannot be empty.",
-            Self::Multiline { .. } => "must be a single line.",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TaskMarkerSections {
-    goals: Vec<String>,
-    context: Vec<String>,
-    constraints: Vec<String>,
-    done_when: Vec<String>,
-}
-
-impl TaskMarkerSections {
-    /// Constructs ordered task sections after trimming each single-line value.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TaskMarkerSectionValueError`] when any value is blank or contains a line break.
-    pub fn try_new(
-        goals: Vec<String>,
-        context: Vec<String>,
-        constraints: Vec<String>,
-        done_when: Vec<String>,
-    ) -> Result<Self, TaskMarkerSectionValueError> {
-        Ok(Self {
-            goals: normalize_marker_section_values(TaskMarkerSection::Goal, goals)?,
-            context: normalize_marker_section_values(TaskMarkerSection::Context, context)?,
-            constraints: normalize_marker_section_values(
-                TaskMarkerSection::Constraint,
-                constraints,
-            )?,
-            done_when: normalize_marker_section_values(TaskMarkerSection::DoneWhen, done_when)?,
-        })
-    }
-
-    #[must_use]
-    pub fn goals(&self) -> &[String] {
-        &self.goals
-    }
-
-    #[must_use]
-    pub fn context(&self) -> &[String] {
-        &self.context
-    }
-
-    #[must_use]
-    pub fn constraints(&self) -> &[String] {
-        &self.constraints
-    }
-
-    #[must_use]
-    pub fn done_when(&self) -> &[String] {
-        &self.done_when
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.goals.is_empty()
-            && self.context.is_empty()
-            && self.constraints.is_empty()
-            && self.done_when.is_empty()
-    }
-}
-
-fn normalize_marker_section_values(
-    section: TaskMarkerSection,
-    values: Vec<String>,
-) -> Result<Vec<String>, TaskMarkerSectionValueError> {
-    values
-        .into_iter()
-        .map(|value| {
-            if value.contains(['\n', '\r']) {
-                return Err(TaskMarkerSectionValueError::Multiline { section });
-            }
-            let value = value.trim().to_string();
-            if value.is_empty() {
-                return Err(TaskMarkerSectionValueError::Empty { section });
-            }
-            Ok(value)
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TaskMarkerSectionEdits {
-    additions: TaskMarkerSections,
-    removals: Vec<TaskMarkerSection>,
-}
-
-impl TaskMarkerSectionEdits {
-    #[must_use]
-    pub fn new(
-        additions: TaskMarkerSections,
-        removals: impl IntoIterator<Item = TaskMarkerSection>,
-    ) -> Self {
-        let mut normalized_removals = Vec::new();
-        for section in removals {
-            push_unseen_section(&mut normalized_removals, section);
-        }
-        Self {
-            additions,
-            removals: normalized_removals,
-        }
-    }
-
-    #[must_use]
-    pub fn additions(&self) -> &TaskMarkerSections {
-        &self.additions
-    }
-
-    #[must_use]
-    pub fn removals(&self) -> &[TaskMarkerSection] {
-        &self.removals
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.additions.is_empty() && self.removals.is_empty()
-    }
-}
-
-fn push_unseen_section(sections: &mut Vec<TaskMarkerSection>, section: TaskMarkerSection) {
-    if !sections.contains(&section) {
-        sections.push(section);
-    }
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum AddTaskBody {
     Shorthand(String),
-    Structured {
-        title: TaskTitle,
-        sections: TaskMarkerSections,
-    },
-    Body {
-        title: TaskTitle,
-        body: TaskBody,
-    },
+    Body { title: TaskTitle, body: TaskBody },
 }
 
 impl AddTaskBody {
@@ -221,11 +51,6 @@ impl AddTaskBody {
     }
 
     #[must_use]
-    pub fn from_structured(title: TaskTitle, sections: TaskMarkerSections) -> Self {
-        Self::Structured { title, sections }
-    }
-
-    #[must_use]
     pub fn from_body(title: TaskTitle, body: TaskBody) -> Self {
         Self::Body { title, body }
     }
@@ -236,7 +61,7 @@ impl AddTaskBody {
 pub struct AddTask {
     /// Destination project ID.
     pub project_id: ProjectId,
-    /// Shorthand or structured task body.
+    /// Shorthand or verbatim task body.
     pub body: AddTaskBody,
     /// Task IDs in the `blocked_by` relationship.
     pub blocked_by: Option<BlockedBy>,
@@ -310,10 +135,7 @@ pub struct CompleteTask {
 
 #[derive(Debug, Clone)]
 pub enum EditTaskContentKind {
-    Structured {
-        title: SetField<TaskTitle>,
-        sections: TaskMarkerSectionEdits,
-    },
+    Title(TaskTitle),
     AppendShorthand {
         title: SetField<TaskTitle>,
         body: String,
@@ -328,15 +150,10 @@ pub enum EditTaskContentKind {
 pub struct EditTaskContent(EditTaskContentKind);
 
 impl EditTaskContent {
-    /// Creates an explicit title or section edit.
-    pub fn structured(
-        title: SetField<TaskTitle>,
-        sections: TaskMarkerSectionEdits,
-    ) -> Result<Self, EditTaskContentError> {
-        if title.is_unchanged() && sections.is_empty() {
-            return Err(EditTaskContentError::EmptyStructured);
-        }
-        Ok(Self(EditTaskContentKind::Structured { title, sections }))
+    /// Creates a title replacement that leaves the body unchanged.
+    #[must_use]
+    pub fn title(title: TaskTitle) -> Self {
+        Self(EditTaskContentKind::Title(title))
     }
 
     /// Creates a non-empty shorthand append.
@@ -365,9 +182,7 @@ impl EditTaskContent {
 /// Reports an invalid task-content edit before application execution.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EditTaskContentError {
-    #[error("task content edit cannot be empty")]
-    EmptyStructured,
-    #[error("--append cannot be empty.")]
+    #[error("--append-body cannot be empty.")]
     EmptyAppend,
 }
 
@@ -578,41 +393,8 @@ pub enum ActivateTaskOutcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AddTaskBody, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskEdits,
-        TaskMarkerSectionEdits, TaskMarkerSectionValueError, TaskMarkerSections,
-    };
+    use super::{AddTaskBody, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskEdits};
     use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
-
-    #[test]
-    fn sections_trim_outer_whitespace_and_preserve_literal_markers() {
-        let sections = TaskMarkerSections::try_new(
-            vec!["  keep /c literal  ".to_string()],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
-        .unwrap();
-
-        assert_eq!(sections.goals(), ["keep /c literal"]);
-    }
-
-    #[test]
-    fn sections_reject_blank_and_multiline_values() {
-        assert!(matches!(
-            TaskMarkerSections::try_new(vec!["  ".to_string()], Vec::new(), Vec::new(), Vec::new()),
-            Err(TaskMarkerSectionValueError::Empty { .. })
-        ));
-        assert!(matches!(
-            TaskMarkerSections::try_new(
-                Vec::new(),
-                vec!["one\ntwo".to_string()],
-                Vec::new(),
-                Vec::new(),
-            ),
-            Err(TaskMarkerSectionValueError::Multiline { .. })
-        ));
-    }
 
     #[test]
     fn shorthand_trims_outer_whitespace_and_accepts_empty_input() {
@@ -634,18 +416,14 @@ mod tests {
         let body = AddTaskBody::from_shorthand("task /g keep text");
         assert!(matches!(body, super::AddTaskBody::Shorthand(body) if body == "task /g keep text"));
         let title = pwf_models::task::TaskTitle::try_new("typed task").unwrap();
-        let body = AddTaskBody::from_structured(title, TaskMarkerSections::default());
+        let body = AddTaskBody::from_body(title, pwf_models::task::TaskBody::new("## Goals"));
         assert!(
-            matches!(body, super::AddTaskBody::Structured { title, sections } if title.as_ref() == "typed task" && sections.is_empty())
+            matches!(body, super::AddTaskBody::Body { title, body } if title.as_ref() == "typed task" && body.as_ref() == "## Goals")
         );
     }
 
     #[test]
     fn edit_contracts_reject_empty_shapes() {
-        assert!(matches!(
-            EditTaskContent::structured(SetField::NoAction, TaskMarkerSectionEdits::default()),
-            Err(EditTaskContentError::EmptyStructured)
-        ));
         assert!(matches!(
             EditTaskContent::append_shorthand(SetField::NoAction, " \n\t ".into()),
             Err(EditTaskContentError::EmptyAppend)

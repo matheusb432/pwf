@@ -22,10 +22,7 @@ fn is_marker_shaped(token: &str) -> bool {
     bytes.len() == 2 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic()
 }
 
-fn classify<const N: usize>(
-    token: &str,
-    configuration: &MarkerSectionConfiguration<N>,
-) -> TokenClassification {
+fn classify(token: &str, configuration: &MarkerSectionConfiguration) -> TokenClassification {
     if token == ITEM_MARKER {
         return TokenClassification::ItemMarker;
     }
@@ -38,8 +35,8 @@ fn classify<const N: usize>(
     }
 }
 
-fn push<const N: usize>(
-    parsed: &mut ParsedMarkerSections<N>,
+fn push(
+    parsed: &mut ParsedMarkerSections,
     section_index: usize,
     body: &str,
     text_start: Option<usize>,
@@ -59,20 +56,9 @@ fn push<const N: usize>(
 /// Text before the first marker is the title. Bare `/` and unknown section-shaped markers start a
 /// new item without changing the selected section.
 #[must_use]
-pub fn parse<const N: usize>(
-    body: &str,
-    configuration: &MarkerSectionConfiguration<N>,
-) -> ParsedMarkerSections<N> {
-    debug_assert!(
-        N > 0,
-        "MarkerSectionConfiguration rejects empty configurations"
-    );
+pub fn parse(body: &str, configuration: &MarkerSectionConfiguration) -> ParsedMarkerSections {
     let body_address = body.as_ptr() as usize;
-    let mut parsed = ParsedMarkerSections {
-        title: String::new(),
-        section_items: MarkerSectionConfiguration::<N>::empty_section_items(),
-        section_presence: [false; N],
-    };
+    let mut parsed = ParsedMarkerSections::empty(configuration.sections().len());
     let mut current_section = 0;
     let mut text_start = None;
     let mut text_end = 0;
@@ -118,8 +104,8 @@ pub fn parse<const N: usize>(
     parsed
 }
 
-fn flush<const N: usize>(
-    parsed: &mut ParsedMarkerSections<N>,
+fn flush(
+    parsed: &mut ParsedMarkerSections,
     current_section: usize,
     body: &str,
     text_start: &mut Option<usize>,
@@ -139,14 +125,24 @@ fn flush<const N: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MarkerSectionDefinition;
+    use crate::{MarkerSectionDefinition, MarkerSectionHeadingLevel, MarkerSectionItemStyle};
 
-    fn configuration() -> MarkerSectionConfiguration<4> {
-        MarkerSectionConfiguration::try_new([
-            MarkerSectionDefinition::try_new("/g", "Goals").unwrap(),
-            MarkerSectionDefinition::try_new("/c", "Context").unwrap(),
-            MarkerSectionDefinition::try_new("/n", "Constraints").unwrap(),
-            MarkerSectionDefinition::try_new("/d", "Done When").unwrap(),
+    fn definition(marker: &str, header: &str) -> MarkerSectionDefinition {
+        MarkerSectionDefinition::try_new(
+            marker,
+            header,
+            MarkerSectionHeadingLevel::try_new(2).unwrap(),
+            MarkerSectionItemStyle::Bullet,
+        )
+        .unwrap()
+    }
+
+    fn configuration() -> MarkerSectionConfiguration {
+        MarkerSectionConfiguration::try_new(vec![
+            definition("/g", "Goals"),
+            definition("/c", "Context"),
+            definition("/n", "Constraints"),
+            definition("/d", "Done When"),
         ])
         .unwrap()
     }
@@ -220,9 +216,9 @@ mod tests {
 
     #[test]
     fn runtime_markers_replace_compile_time_defaults() {
-        let configuration = MarkerSectionConfiguration::try_new([
-            MarkerSectionDefinition::try_new("/o", "Objectives").unwrap(),
-            MarkerSectionDefinition::try_new("/b", "Background").unwrap(),
+        let configuration = MarkerSectionConfiguration::try_new(vec![
+            definition("/o", "Objectives"),
+            definition("/b", "Background"),
         ])
         .unwrap();
         let parsed = parse("title /o first /b second /g third", &configuration);

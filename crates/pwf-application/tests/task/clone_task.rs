@@ -1,10 +1,25 @@
-use pwf_application::task::{
-    clone_task::{self, CloneTaskError},
-    get_task::{self, GetTaskError},
+use pwf_application::{
+    ports::user_settings::{TaskBodyPresetReader, UserSettingsLoadError},
+    task::{
+        body_presets::TaskBodyPresets,
+        clone_task::{self, CloneTaskError},
+        get_task::{self, GetTaskError},
+    },
 };
 use pwf_wire::task::{CloneTask, ClonedTaskProjectId, TaskRecord, TaskRecordError};
 
-use crate::support::{FixedClock, InMemoryStore, insert_project, task_record};
+use crate::support::{
+    FixedClock, FixedTaskBodyPresets, InMemoryStore, insert_project, task_record,
+};
+
+/// Proves verbatim creation paths never read task-body presets.
+struct UnreadableTaskBodyPresets;
+
+impl TaskBodyPresetReader for UnreadableTaskBodyPresets {
+    fn load_task_body_presets(&self) -> Result<TaskBodyPresets, UserSettingsLoadError> {
+        Err(anyhow::anyhow!("task body presets must not be read").into())
+    }
+}
 
 async fn staged(pool: &sqlx::SqlitePool, source: TaskRecord) -> (InMemoryStore, CloneTask) {
     insert_project(pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
@@ -25,17 +40,13 @@ async fn clone_keeps_the_source_project_title_and_authored_body(pool: sqlx::Sqli
         ..task_record("FOO-0001")
     };
     let (store, command) = staged(&pool, source.clone()).await;
-    sqlx::query("DELETE FROM task_marker_sections")
-        .execute(&pool)
-        .await
-        .unwrap();
 
     let result = clone_task::execute(
         command,
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &UnreadableTaskBodyPresets,
     )
     .await
     .unwrap();
@@ -68,7 +79,7 @@ async fn clone_rejects_an_invalid_source_without_writing(pool: sqlx::SqlitePool)
         &store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
         &FixedClock,
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        &FixedTaskBodyPresets::default(),
     )
     .await
     .unwrap_err();

@@ -125,6 +125,17 @@ impl TaskClient {
             .map_err(Into::into)
     }
 
+    pub async fn get_task_body_sections(
+        &self,
+        request: pb::GetTaskBodySectionsRequest,
+    ) -> Result<pb::GetTaskBodySectionsResponse, ClientError> {
+        self.client()
+            .get_task_body_sections(request)
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(Into::into)
+    }
+
     pub async fn get_task_dag(
         &self,
         request: pb::GetTaskDagRequest,

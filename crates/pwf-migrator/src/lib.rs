@@ -86,6 +86,13 @@ mod tests {
         .await
         .unwrap();
         assert!(!receipts_exist);
+        let marker_sections_exist: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = 'task_marker_sections')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!marker_sections_exist);
         sqlx::query("UPDATE projects SET snapshot_enabled = 1 WHERE id = 'FOO'")
             .execute(&pool)
             .await
@@ -112,18 +119,17 @@ mod tests {
         second.unwrap();
         let pool = pwf_infra::database::build_pool(&path).await.unwrap();
         sqlx::query(
-            "UPDATE task_marker_sections SET header = 'Objectives' WHERE section = 'goals'",
+            "INSERT INTO projects (id, title, tasks_kind, tasks_path, created_at) VALUES ('FOO', 'foo', 'directory', '/tasks/foo', '2026-07-02T00:00:00Z')",
         )
         .execute(&pool)
         .await
         .unwrap();
         super::run(&path).await.unwrap();
-        let header: String =
-            sqlx::query_scalar("SELECT header FROM task_marker_sections WHERE section = 'goals'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(header, "Objectives");
+        let title: String = sqlx::query_scalar("SELECT title FROM projects WHERE id = 'FOO'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(title, "foo");
         pwf_infra::database::check_database_ready(&pool)
             .await
             .unwrap();

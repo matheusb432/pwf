@@ -222,7 +222,7 @@ mod tests {
 
         assert!(matches!(
             check_database_compatible(&pool).await.unwrap(),
-            MigrationCompatibility::Compatible { pending: 3 }
+            MigrationCompatibility::Compatible { pending: 4 }
         ));
         assert!(check_database_ready(&pool).await.is_err());
         let versions = read_migrations(&mut pool.acquire().await.unwrap())

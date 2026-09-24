@@ -2,9 +2,12 @@ use std::pin::Pin;
 
 use futures::Stream;
 use pwf_application::{
-    ports::{confirmation::ConfirmationClientError, task_vault::TaskMutationError},
+    ports::{
+        confirmation::ConfirmationClientError, task_vault::TaskMutationError,
+        user_settings::UserSettingsLoadError,
+    },
     task::{
-        CloseTaskError, TaskMarkerSectionsError,
+        CloseTaskError,
         activate_task::{self, ActivateTaskError},
         add_task::{self, AddTaskError},
         add_task_from_file::{self, AddTaskFromFileError},
@@ -14,6 +17,7 @@ use pwf_application::{
         complete_task::{self, CompleteTaskError},
         edit_task::{self, EditTaskError},
         get_task::{self, GetTaskError},
+        get_task_body_sections::{self, GetTaskBodySectionsError},
         get_task_dag::{self, GetTaskDagError},
         get_task_record::{self, GetTaskRecordError},
         list_tasks::{self, ListTasksError},
@@ -66,7 +70,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
                 &state.store,
                 &state.projects,
                 &state.clock,
-                &state.task_marker_sections,
+                &state.user_settings,
             ))
         })
         .await
@@ -92,7 +96,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
                 &state.store,
                 &state.projects,
                 &state.clock,
-                &state.task_marker_sections,
+                &state.user_settings,
             ))
         })
         .await
@@ -113,7 +117,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             &self.state.store,
             &self.state.projects,
             &self.state.clock,
-            &self.state.task_marker_sections,
+            &self.state.user_settings,
         )
         .await
         .map(Into::into)
@@ -183,7 +187,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             command,
             &self.state.store,
             &self.state.projects,
-            &self.state.task_marker_sections,
+            &self.state.user_settings,
         )
         .await
         .map(proto::task::update_task_response)
@@ -224,6 +228,18 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             .await
             .map_err(|error| get_task_dag_status(&error))?;
         Ok(Response::new(proto::task::get_task_dag_response(graph)))
+    }
+
+    async fn get_task_body_sections(
+        &self,
+        request: Request<pb::GetTaskBodySectionsRequest>,
+    ) -> Result<Response<pb::GetTaskBodySectionsResponse>, Status> {
+        let query = request.into_inner().try_into()?;
+        get_task_body_sections::execute(query, &self.state.user_settings, &self.state.projects)
+            .await
+            .map(Into::into)
+            .map(Response::new)
+            .map_err(get_task_body_sections_status)
     }
 
     async fn list_tasks(
@@ -369,7 +385,7 @@ fn create_task_status(error: AddTaskError) -> Status {
         | AddTaskError::SelfBlockedBy { .. }
         | AddTaskError::BlockedByCycle { .. } => Status::failed_precondition(message),
         AddTaskError::InvalidTitle(_) => Status::invalid_argument(message),
-        AddTaskError::MarkerSections(error) => marker_sections_status(&error),
+        AddTaskError::TaskBodyPresets(error) => task_body_presets_status(&error),
         AddTaskError::MalformedBlockedBy { .. } => Status::data_loss(message),
 
         AddTaskError::WriteStore { .. }
@@ -437,13 +453,12 @@ fn edit_task_status(error: &EditTaskError) -> Status {
         EditTaskError::Mutation(error) => task_mutation_status(error),
 
         EditTaskError::InvalidTitle(_) => Status::invalid_argument(message),
-        EditTaskError::MarkerSections(error) => marker_sections_status(error),
+        EditTaskError::TaskBodyPresets(error) => task_body_presets_status(error),
         EditTaskError::ClosedTask { .. }
         | EditTaskError::InvalidPersistedTitle { .. }
         | EditTaskError::UnknownBlockedByIds { .. }
         | EditTaskError::SelfBlockedBy { .. }
-        | EditTaskError::BlockedByCycle { .. }
-        | EditTaskError::AmbiguousMarkerSections { .. } => Status::failed_precondition(message),
+        | EditTaskError::BlockedByCycle { .. } => Status::failed_precondition(message),
         EditTaskError::InvalidTagsFrontmatter { .. } | EditTaskError::MalformedBlockedBy { .. } => {
             Status::data_loss(message)
         }
@@ -453,15 +468,20 @@ fn edit_task_status(error: &EditTaskError) -> Status {
     }
 }
 
-fn marker_sections_status(error: &TaskMarkerSectionsError) -> Status {
+fn task_body_presets_status(error: &UserSettingsLoadError) -> Status {
     match error {
-        TaskMarkerSectionsError::Database(_) => Status::internal(error.to_string()),
-        TaskMarkerSectionsError::InvalidSectionSet { .. }
-        | TaskMarkerSectionsError::InvalidSection { .. }
-        | TaskMarkerSectionsError::InvalidConfiguration(_)
-        | TaskMarkerSectionsError::InvalidDefinitionCount { .. } => {
-            Status::data_loss(error.to_string())
+        UserSettingsLoadError::InvalidConfiguration(_) => {
+            Status::failed_precondition(error.to_string())
         }
+        UserSettingsLoadError::Adapter(_) => Status::internal(error.to_string()),
+    }
+}
+
+fn get_task_body_sections_status(error: GetTaskBodySectionsError) -> Status {
+    match error {
+        GetTaskBodySectionsError::ProjectNotFound { .. } => Status::not_found(error.to_string()),
+        GetTaskBodySectionsError::Settings(error) => task_body_presets_status(&error),
+        GetTaskBodySectionsError::QueryProject { .. } => Status::internal(error.to_string()),
     }
 }
 
@@ -510,11 +530,9 @@ fn get_task_dag_status(error: &GetTaskDagError) -> Status {
 fn list_tasks_status(error: ListTasksError) -> Status {
     match error {
         ListTasksError::GetProject(error) => get_project_status(&error),
-        ListTasksError::Settings(
-            pwf_application::ports::user_settings::UserSettingsLoadError::InvalidConfiguration(
-                error,
-            ),
-        ) => Status::failed_precondition(error.to_string()),
+        ListTasksError::Settings(UserSettingsLoadError::InvalidConfiguration(error)) => {
+            Status::failed_precondition(error.to_string())
+        }
         ListTasksError::InvalidPageToken { .. } => Status::invalid_argument(error.to_string()),
         error => Status::internal(error.to_string()),
     }

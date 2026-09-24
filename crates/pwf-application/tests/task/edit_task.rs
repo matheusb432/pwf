@@ -1,17 +1,17 @@
-use pwf_application::task::{edit_task, edit_task::EditTaskError};
+use pwf_application::task::{
+    body_presets::MarkerSectionItemStyle, edit_task, edit_task::EditTaskError,
+};
 use pwf_models::task::{BlockedBy, EffortTier, TaskStatus, TaskTags, TaskTitle};
 use pwf_wire::{
     collection_edit::CollectionEdit,
     patch_field::PatchField,
     set_field::SetField,
-    task::{
-        EditTask, EditTaskContent, RawTaskTags, TaskEdits, TaskMarkerSection,
-        TaskMarkerSectionEdits, TaskMarkerSections, TaskRecord,
-    },
+    task::{EditTask, EditTaskContent, RawTaskTags, TaskEdits, TaskRecord},
 };
 
 use crate::support::{
-    InMemoryStore, insert_project, stored_blocked_by, task_record, task_timestamp,
+    FixedTaskBodyPresets, InMemoryStore, insert_project, stored_blocked_by, task_record,
+    task_timestamp,
 };
 
 fn record(id: &str, status: TaskStatus, body: &str) -> TaskRecord {
@@ -68,11 +68,20 @@ async fn run(
     store: &InMemoryStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), EditTaskError> {
+    run_with_presets(command, store, pool, &FixedTaskBodyPresets::default()).await
+}
+
+async fn run_with_presets(
+    command: EditTask,
+    store: &InMemoryStore,
+    pool: &sqlx::SqlitePool,
+    presets: &FixedTaskBodyPresets,
+) -> Result<(), EditTaskError> {
     edit_task::execute(
         command,
         store,
         &pwf_infra::project_store::SqliteProjectStore::new(pool.clone()),
-        &pwf_infra::task_marker_section_store::SqliteTaskMarkerSectionStore::new(pool.clone()),
+        presets,
     )
     .await
     .map(|result| result.outcome)
@@ -90,14 +99,7 @@ async fn edit_rejects_closed_tasks_before_content_changes(pool: sqlx::SqlitePool
         TaskStatus::Done,
         "## Goals\n\n- keep this",
     )]);
-    let command = content_edit(
-        "FOO-0001",
-        EditTaskContent::structured(
-            SetField::Set(title("new title")),
-            TaskMarkerSectionEdits::default(),
-        )
-        .unwrap(),
-    );
+    let command = content_edit("FOO-0001", EditTaskContent::title(title("new title")));
 
     let error = run(command, &store, &pool).await.unwrap_err();
 
@@ -152,20 +154,8 @@ async fn body_replacement_omits_explicit_empty_sections(pool: sqlx::SqlitePool) 
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn body_replacement_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) {
+async fn body_replacement_uses_the_configured_preset_layout(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
-    sqlx::query(
-        "UPDATE task_marker_sections SET marker = '/o', header = 'Objectives' WHERE section = 'goals'",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "UPDATE task_marker_sections SET marker = '/v', header = 'Verification' WHERE section = 'done_when'",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
     let store = staged(vec![record(
         "FOO-0001",
         TaskStatus::Active,
@@ -173,26 +163,34 @@ async fn body_replacement_uses_runtime_markers_and_headers(pool: sqlx::SqlitePoo
     )]);
     let command = content_edit(
         "FOO-0001",
-        EditTaskContent::replace_shorthand("New Title /o new objective /v tests pass".into()),
+        EditTaskContent::replace_shorthand(
+            "New Title /o first objective / second objective /v tests pass".into(),
+        ),
     );
 
-    run(command, &store, &pool).await.unwrap();
+    run_with_presets(
+        command,
+        &store,
+        &pool,
+        &FixedTaskBodyPresets::selecting(&[
+            ("/o", "Objectives", 3, MarkerSectionItemStyle::Numbered),
+            ("/v", "Verification", 4, MarkerSectionItemStyle::Paragraph),
+        ]),
+    )
+    .await
+    .unwrap();
 
     let edited = &store.tasks("foo-bar")[0];
     assert_eq!(edited.title, "New Title");
     assert_eq!(
         edited.body,
-        "## Objectives\n\n- new objective\n\n## Verification\n\n- tests pass"
+        "### Objectives\n\n1. first objective\n2. second objective\n\n#### Verification\n\ntests pass"
     );
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn body_replacement_rejects_a_runtime_marker_before_the_title(pool: sqlx::SqlitePool) {
+async fn body_replacement_rejects_a_configured_marker_before_the_title(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
-    sqlx::query("UPDATE task_marker_sections SET marker = '/o' WHERE section = 'goals'")
-        .execute(&pool)
-        .await
-        .unwrap();
     let store = staged(vec![record(
         "FOO-0001",
         TaskStatus::Active,
@@ -203,74 +201,57 @@ async fn body_replacement_rejects_a_runtime_marker_before_the_title(pool: sqlx::
         EditTaskContent::replace_shorthand("/o no title".into()),
     );
 
-    let error = run(command, &store, &pool).await.unwrap_err();
+    let error = run_with_presets(
+        command,
+        &store,
+        &pool,
+        &FixedTaskBodyPresets::selecting(&[(
+            "/o",
+            "Objectives",
+            2,
+            MarkerSectionItemStyle::Bullet,
+        )]),
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(error, EditTaskError::InvalidTitle(_)));
     assert_eq!(store.tasks("foo-bar")[0].body, "## Goals\n\n- old");
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn structured_content_replaces_marker_sections_and_preserves_unrelated_markdown(
-    pool: sqlx::SqlitePool,
-) {
+async fn append_uses_the_task_project_preset_and_existing_item_style(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
     let store = staged(vec![record(
         "FOO-0001",
         TaskStatus::Active,
-        "## Goals\n\n- old\n\n## Notes\n\nkeep me\n\n## Done When\n\n- old outcome",
+        "## Goals\n\n1. first\n\n## Notes\n\nkeep me",
     )]);
-    let additions = TaskMarkerSections::try_new(
-        vec!["new /c literal".to_string()],
-        vec!["new context".to_string()],
-        Vec::new(),
-        vec!["new outcome".to_string()],
-    )
-    .unwrap();
     let command = content_edit(
         "FOO-0001",
-        EditTaskContent::structured(
-            SetField::NoAction,
-            TaskMarkerSectionEdits::new(
-                additions,
-                [
-                    TaskMarkerSection::Goal,
-                    TaskMarkerSection::Context,
-                    TaskMarkerSection::DoneWhen,
-                ],
-            ),
-        )
-        .unwrap(),
+        EditTaskContent::append_shorthand(SetField::NoAction, "second /c first / second".into())
+            .unwrap(),
     );
 
-    run(command, &store, &pool).await.unwrap();
+    run_with_presets(
+        command,
+        &store,
+        &pool,
+        &FixedTaskBodyPresets::for_project(
+            "FOO",
+            &[
+                ("/g", "Goals", 3, MarkerSectionItemStyle::Bullet),
+                ("/c", "Context", 4, MarkerSectionItemStyle::Paragraph),
+            ],
+        ),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         store.tasks("foo-bar")[0].body,
-        "## Goals\n\n- new /c literal\n\n## Notes\n\nkeep me\n\n## Context\n\n- new context\n\n## Done When\n\n- new outcome"
+        "## Goals\n\n1. first\n2. second\n\n## Notes\n\nkeep me\n\n#### Context\n\nfirst\n\nsecond\n"
     );
-}
-
-#[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn structured_content_rejects_duplicate_lane_headings(pool: sqlx::SqlitePool) {
-    register_project(&pool).await;
-    let body = "## Goals\n\n- one\n\n## Goals\n\n- two";
-    let store = staged(vec![record("FOO-0001", TaskStatus::Active, body)]);
-    let command = content_edit(
-        "FOO-0001",
-        EditTaskContent::structured(
-            SetField::NoAction,
-            TaskMarkerSectionEdits::new(TaskMarkerSections::default(), [TaskMarkerSection::Goal]),
-        )
-        .unwrap(),
-    );
-
-    let error = run(command, &store, &pool).await.unwrap_err();
-
-    assert!(matches!(
-        error,
-        EditTaskError::AmbiguousMarkerSections { ref header } if header == "## Goals"
-    ));
-    assert_eq!(store.tasks("foo-bar")[0].body, body);
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -355,13 +336,7 @@ async fn malformed_dependencies_only_prevent_appending_to_them(pool: sqlx::Sqlit
         ]);
         let command = edit(
             "FOO-0001",
-            SetField::Set(
-                EditTaskContent::structured(
-                    SetField::Set(title("repaired")),
-                    TaskMarkerSectionEdits::default(),
-                )
-                .unwrap(),
-            ),
+            SetField::Set(EditTaskContent::title(title("repaired"))),
             dependency_edit,
             PatchField::NoAction,
             CollectionEdit::Unchanged,
