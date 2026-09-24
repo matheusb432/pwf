@@ -1,0 +1,511 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+import "pwf/v1/confirmation.proto";
+import "pwf/v1/field_edit.proto";
+import "pwf/v1/task_blocked_by.proto";
+import "pwf/v1/task_order.proto";
+import "pwf/v1/task_priority.proto";
+import "pwf/v1/task_status.proto";
+
+service TaskService {
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  rpc CreateTaskFromFile(CreateTaskFromFileRequest) returns (CreateTaskFromFileResponse);
+  rpc CloneTask(CloneTaskRequest) returns (CloneTaskResponse);
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+  rpc BacklogTask(BacklogTaskRequest) returns (BacklogTaskResponse);
+  rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+  rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc GetTaskRecord(GetTaskRecordRequest) returns (GetTaskRecordResponse);
+  rpc GetTaskDag(GetTaskDagRequest) returns (GetTaskDagResponse);
+  rpc GetTaskBodySections(GetTaskBodySectionsRequest) returns (GetTaskBodySectionsResponse);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  rpc DeleteTask(stream DeleteTaskRequest) returns (stream DeleteTaskResponse);
+  rpc ActivateTask(stream ActivateTaskRequest) returns (stream ActivateTaskResponse);
+}
+
+// Omission selects the global preset; a supplied project applies its override.
+message GetTaskBodySectionsRequest {
+  optional string project_id = 1;
+}
+
+enum TaskBodyItemStyle {
+  TASK_BODY_ITEM_STYLE_UNSPECIFIED = 0;
+  TASK_BODY_ITEM_STYLE_BULLET = 1;
+  TASK_BODY_ITEM_STYLE_NUMBERED = 2;
+  TASK_BODY_ITEM_STYLE_PARAGRAPH = 3;
+}
+
+message TaskBodySection {
+  string marker = 1;
+  string header = 2;
+  // Markdown ATX heading level from 1 through 6.
+  uint32 heading_level = 3;
+  TaskBodyItemStyle item_style = 4;
+}
+
+// Lists the effective preset's sections in rendering order.
+message GetTaskBodySectionsResponse {
+  string preset = 1;
+  repeated TaskBodySection sections = 2;
+}
+
+enum EffortTier {
+  EFFORT_TIER_UNSPECIFIED = 0;
+  EFFORT_TIER_LOW = 1;
+  EFFORT_TIER_MEDIUM = 2;
+  EFFORT_TIER_HIGH = 3;
+  EFFORT_TIER_HIGHEST = 4;
+}
+
+message CreateTaskRequest {
+  reserved 4;
+  reserved "index_section";
+  string project_id = 1;
+  string shorthand = 2;
+  reserved 3;
+  reserved "structured";
+  repeated string blocked_by = 5;
+  optional EffortTier effort = 6;
+  repeated string tags = 7;
+  optional PriorityTier priority = 8;
+  reserved 9;
+  reserved "request_id";
+}
+
+message CreateTaskFromFileRequest {
+  string project_id = 1;
+  string source_file = 2;
+}
+
+// Creates an active task with the source title, body, tags, tiers, and blockers.
+// Lifecycle timestamps and commits belong to the new task and are not copied.
+message CloneTaskRequest {
+  string id = 1;
+  // Omission uses the source task's project.
+  optional string project_id = 2;
+  reserved 3;
+  reserved "request_id";
+}
+
+message CancelTaskRequest {
+  reserved 4;
+  reserved "review";
+  string id = 1;
+  string report = 2;
+  repeated string commits = 3;
+  optional string expected_revision = 5;
+  reserved 6;
+  reserved "request_id";
+}
+
+// Defers an active task without closing it. Repeating this on backlog is a no-op.
+message BacklogTaskRequest {
+  string id = 1;
+}
+
+message CompleteTaskRequest {
+  reserved 4;
+  reserved "review";
+  string id = 1;
+  optional string report = 2;
+  repeated string commits = 3;
+  optional string expected_revision = 5;
+  reserved 6;
+  reserved "request_id";
+}
+
+message EffortEdit {
+  oneof operation {
+    EffortTier set = 1;
+    ClearField clear = 2;
+  }
+}
+
+message PriorityEdit {
+  oneof operation {
+    PriorityTier set = 1;
+    ClearField clear = 2;
+  }
+}
+
+message AppendTaskBody {
+  // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
+  optional string title = 1;
+  string body = 2;
+}
+
+message TaskContentEdit {
+  reserved 1;
+  reserved "structured";
+  oneof content {
+    AppendTaskBody append = 2;
+    string replace = 3;
+    // Sets a nonempty title and leaves the body unchanged.
+    string title = 4;
+  }
+}
+
+message UpdateTaskRequest {
+  string id = 1;
+  // Omitted leaves content unchanged; a supplied value applies the selected edit.
+  TaskContentEdit content = 2;
+  StringCollectionEdit blocked_by = 3;
+  EffortEdit effort = 4;
+  StringCollectionEdit tags = 5;
+  PriorityEdit priority = 6;
+  optional string expected_revision = 7;
+  reserved 8;
+  reserved "request_id";
+}
+
+message GetTaskRequest {
+  reserved 2;
+  reserved "output";
+  string id = 1;
+}
+
+message GetTaskRecordRequest {
+  string id = 1;
+}
+
+enum TaskDagMode {
+  TASK_DAG_MODE_UNSPECIFIED = 0;
+  TASK_DAG_MODE_BLOCKED_BY = 1;
+  TASK_DAG_MODE_BLOCKS = 2;
+  TASK_DAG_MODE_FULL = 3;
+}
+
+message GetTaskDagRequest {
+  string id = 1;
+  optional uint32 depth = 2;
+  TaskStatusFilter status = 3;
+  TaskDagMode mode = 4;
+}
+
+enum ListDetail {
+  LIST_DETAIL_UNSPECIFIED = 0;
+  LIST_DETAIL_SUMMARY = 1;
+  LIST_DETAIL_DETAILED = 2;
+}
+
+enum TaskStatusFilter {
+  TASK_STATUS_FILTER_UNSPECIFIED = 0;
+  TASK_STATUS_FILTER_ACTIVE = 1;
+  TASK_STATUS_FILTER_DONE = 2;
+  TASK_STATUS_FILTER_CANCELLED = 3;
+  TASK_STATUS_FILTER_ALL = 4;
+  TASK_STATUS_FILTER_BACKLOG = 5;
+}
+
+message ListTasksRequest {
+  optional string project_id = 1;
+  reserved 2, 12;
+  reserved "section";
+  bool all = 13;
+  optional uint64 number = 3;
+  optional EffortTier effort = 4;
+  repeated string tags = 5;
+  OrderSpec order = 6;
+  optional TaskStatusFilter status = 7;
+  ListDetail detail = 8;
+  optional PriorityTier priority = 9;
+  uint32 page_size = 10;
+  optional string page_token = 11;
+}
+
+message TaskMutationSummary {
+  string id = 1;
+  string title = 2;
+  TaskStatus status = 3;
+}
+
+message CreateTaskResponse {
+  string id = 1;
+  TaskMutationSummary task = 2;
+}
+
+message CreateTaskFromFileResponse {
+  string id = 1;
+  TaskMutationSummary task = 2;
+}
+
+message CloneTaskResponse {
+  string id = 1;
+  TaskMutationSummary task = 2;
+}
+
+message CancelTaskResponse {
+  reserved 1;
+  reserved "review_task_id";
+  TaskMutationSummary task = 2;
+}
+
+message CompleteTaskResponse {
+  reserved 1;
+  reserved "review_task_id";
+  TaskMutationSummary task = 2;
+}
+
+message UpdateTaskResponse {
+  TaskMutationSummary task = 1;
+}
+
+message BackloggedTask {
+  TaskMutationSummary task = 1;
+}
+message AlreadyBackloggedTask {
+  TaskMutationSummary task = 1;
+}
+
+message BacklogTaskResponse {
+  oneof outcome {
+    BackloggedTask backlogged = 1;
+    AlreadyBackloggedTask already_backlogged = 2;
+  }
+}
+
+// A record retains raw metadata even when a consumer cannot interpret it.
+message TaskRecord {
+  string id = 1;
+  string title = 2;
+  TaskStatus status = 3;
+  optional string created_at = 4;
+  optional string completed_at = 5;
+  optional string commits = 6;
+  optional string tags = 7;
+  optional string effort = 8;
+  optional string priority = 9;
+  // Omitted means the property is absent.
+  StoredTaskBlockedBy blocked_by = 10;
+  reserved 11;
+  reserved "section";
+  string body = 12;
+  string source = 13;
+  string locator = 14;
+  reserved 15, 17, 18;
+  reserved "placement", "note_file", "missing_note";
+  string revision = 16;
+}
+
+message StoredTaskBlockedBy {
+  oneof value {
+    // A nonempty collection of canonical task IDs.
+    StringValues valid = 1;
+    MalformedTaskBlockedBy malformed = 2;
+  }
+}
+
+message MalformedTaskBlockedBy {
+  string raw = 1;
+  string reason = 2;
+}
+
+message GetTaskResponse {
+  reserved 1, 2, 3, 4;
+  reserved "revision", "markdown", "path", "data";
+  reserved 5;
+  Task task = 6;
+}
+
+message GetTaskRecordResponse {
+  TaskRecord record = 1;
+}
+
+message Task {
+  string id = 1;
+  string title = 2;
+  TaskStatus status = 3;
+  string body = 4;
+  optional string created_at = 5;
+  optional string completed_at = 6;
+  optional string commits = 7;
+  repeated string tags = 8;
+  optional EffortTier effort = 9;
+  optional PriorityTier priority = 10;
+  repeated string blocked_by = 11;
+  reserved 12;
+  reserved "section";
+  string revision = 13;
+}
+
+message TaskDagTaskNode {
+  string id = 1;
+  string title = 2;
+  TaskStatus status = 3;
+}
+
+message TaskDagMissingNode {
+  string id = 1;
+}
+message TaskDagUnavailableNode {
+  string id = 1;
+}
+message TaskDagDepthLimitNode {}
+
+message TaskDagNode {
+  oneof value {
+    TaskDagTaskNode task = 1;
+    TaskDagMissingNode missing = 2;
+    TaskDagUnavailableNode unavailable = 3;
+    TaskDagDepthLimitNode depth_limit = 4;
+  }
+}
+
+message TaskDagEdge {
+  uint32 blocker_node_index = 1;
+  uint32 dependent_node_index = 2;
+}
+
+message GetTaskDagResponse {
+  string root_id = 1;
+  repeated TaskDagNode nodes = 2;
+  repeated TaskDagEdge edges = 3;
+}
+
+enum TaskIssueKind {
+  TASK_ISSUE_KIND_UNSPECIFIED = 0;
+  reserved 1;
+  reserved "TASK_ISSUE_KIND_MISSING_NOTE";
+  TASK_ISSUE_KIND_PLACEHOLDER_BODY = 2;
+}
+
+message TaskIssue {
+  TaskIssueKind kind = 1;
+  reserved 2;
+  reserved "path";
+}
+
+message ListedTask {
+  string id = 1;
+  string project = 2;
+  TaskStatus status = 3;
+  string heading = 4;
+  string body = 5;
+  optional string project_path = 6;
+  reserved 7;
+  reserved "location";
+  string file_path = 17;
+  repeated TaskIssue launch_issues = 8;
+  reserved 9;
+  reserved "section";
+  repeated string blocked_by = 10;
+  repeated BlockedByStatus blocked_by_statuses = 11;
+  repeated BlockedByIssue blocked_by_issues = 12;
+  optional EffortTier effort = 13;
+  optional string raw_tags = 14;
+  optional string created = 15;
+  optional PriorityTier priority = 16;
+  // Exact file contents, present only for detailed reads.
+  optional string source = 18;
+  optional string created_at = 19;
+  optional string completed_at = 20;
+  optional string commits = 21;
+}
+
+message ListTasksResponse {
+  repeated ListedTask tasks = 1;
+  uint64 hidden = 2;
+  optional string project = 3;
+  optional string project_task_path = 4;
+  TaskStatusFilter status_filter = 5;
+  reserved 6;
+  reserved "layout";
+  ListDetail detail = 7;
+  optional string next_page_token = 8;
+}
+
+message DeleteTaskStart {
+  string id = 1;
+  reserved 2;
+  reserved "request_id";
+}
+
+message DeleteTaskConfirmation {
+  string task_id = 1;
+  string project = 2;
+  string title = 3;
+  TaskStatus status = 4;
+  string file_path = 5;
+  optional string obsidian_vault = 6;
+  optional string trash_folder = 7;
+}
+
+message ActivateTaskConfirmation {
+  string task_id = 1;
+  string project = 2;
+  optional string completion_date = 3;
+  optional string commits = 4;
+  optional string report = 5;
+}
+
+message DeleteTaskPreflight {
+  DeleteTaskConfirmation confirmation = 1;
+}
+
+message DeletedTask {
+  TaskMutationSummary task = 1;
+}
+message AbortedTaskOperation {}
+
+message DeleteTaskResult {
+  oneof outcome {
+    DeletedTask deleted = 1;
+    AbortedTaskOperation aborted = 2;
+  }
+}
+
+message DeleteTaskRequest {
+  oneof value {
+    DeleteTaskStart start = 1;
+    ConfirmationDecision decision = 2;
+  }
+}
+
+message DeleteTaskResponse {
+  oneof value {
+    DeleteTaskPreflight preflight = 1;
+    DeleteTaskResult result = 2;
+  }
+}
+
+message ActivateTaskStart {
+  string id = 1;
+  reserved 2;
+  reserved "request_id";
+}
+
+message ActivateTaskPreflight {
+  ActivateTaskConfirmation confirmation = 1;
+}
+
+message ActivatedTask {
+  TaskMutationSummary task = 1;
+}
+message AlreadyActiveTask {
+  TaskMutationSummary task = 1;
+}
+
+message ActivateTaskResult {
+  oneof outcome {
+    ActivatedTask activated = 1;
+    AlreadyActiveTask already_active = 2;
+    AbortedTaskOperation aborted = 3;
+  }
+}
+
+message ActivateTaskRequest {
+  oneof value {
+    ActivateTaskStart start = 1;
+    ConfirmationDecision decision = 2;
+  }
+}
+
+message ActivateTaskResponse {
+  oneof value {
+    ActivateTaskPreflight preflight = 1;
+    ActivateTaskResult result = 2;
+  }
+}

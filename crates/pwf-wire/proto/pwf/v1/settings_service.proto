@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+import "pwf/v1/task_order.proto";
+import "pwf/v1/task_priority.proto";
+
+service SettingsService {
+  rpc GetUserSettings(GetUserSettingsRequest) returns (GetUserSettingsResponse);
+}
+
+message GetUserSettingsRequest {}
+
+message RgbColor {
+  uint32 red = 1;
+  uint32 green = 2;
+  uint32 blue = 3;
+}
+
+message TaskStatusColors {
+  RgbColor active = 1;
+  RgbColor done = 2;
+  RgbColor cancelled = 3;
+  RgbColor backlog = 4;
+}
+
+message ProjectStatusColors {
+  RgbColor active = 1;
+  RgbColor paused = 2;
+}
+
+message NoteStatusColors {
+  RgbColor active = 1;
+  RgbColor verified = 2;
+}
+
+message GetUserSettingsResponse {
+  TaskStatusColors task_status_colors = 1;
+  PriorityTier default_priority = 2;
+  OrderSpec default_sort_order = 3;
+  ProjectStatusColors project_status_colors = 4;
+  NoteStatusColors note_status_colors = 5;
+  string datetime_format = 6;
+  uint64 default_list_page_size = 7;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+enum PriorityTier {
+  PRIORITY_TIER_UNSPECIFIED = 0;
+  PRIORITY_TIER_LOW = 1;
+  PRIORITY_TIER_MEDIUM = 2;
+  PRIORITY_TIER_HIGH = 3;
+  PRIORITY_TIER_HIGHEST = 4;
+}

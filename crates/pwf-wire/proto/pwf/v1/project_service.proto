@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+import "pwf/v1/field_edit.proto";
+
+service ProjectService {
+  rpc AddVaultProject(AddVaultProjectRequest) returns (AddVaultProjectResponse);
+  rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
+  rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  rpc PauseProject(PauseProjectRequest) returns (PauseProjectResponse);
+  rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
+  rpc ResumeProject(ResumeProjectRequest) returns (ResumeProjectResponse);
+  rpc UpdateProject(UpdateProjectRequest) returns (UpdateProjectResponse);
+}
+
+enum ProjectStatusFilter {
+  PROJECT_STATUS_FILTER_UNSPECIFIED = 0;
+  PROJECT_STATUS_FILTER_ACTIVE_ONLY = 1;
+  PROJECT_STATUS_FILTER_INCLUDING_PAUSED = 2;
+}
+
+message ProjectFields {
+  string id = 1;
+  string title = 2;
+  optional string source_kind = 3;
+  optional string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  optional string obsidian_vault = 7;
+  bool snapshot_enabled = 8;
+}
+
+message Project {
+  string id = 1;
+  string title = 2;
+  optional string source_kind = 3;
+  optional string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  string created_at = 7;
+  bool is_paused = 8;
+  optional string obsidian_vault = 9;
+  bool snapshot_enabled = 10;
+}
+
+message AddVaultProjectRequest {
+  string vault_path = 1;
+  string id = 2;
+  string tasks_path = 3;
+  optional string title = 4;
+  optional string source_path = 5;
+}
+
+message AddVaultProjectResponse {
+  string id = 1;
+}
+
+message AddProjectRequest {
+  ProjectFields fields = 1;
+}
+
+message AddProjectResponse {
+  string id = 1;
+  string title = 2;
+  optional string source_kind = 3;
+  optional string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  string created_at = 7;
+  bool is_paused = 8;
+  optional string obsidian_vault = 9;
+  bool snapshot_enabled = 10;
+}
+
+message GetProjectRequest {
+  string id = 1;
+  ProjectStatusFilter status = 2;
+}
+
+message GetProjectResponse {
+  string id = 1;
+  string title = 2;
+  optional string source_kind = 3;
+  optional string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  string created_at = 7;
+  bool is_paused = 8;
+  optional string obsidian_vault = 9;
+  bool snapshot_enabled = 10;
+}
+
+// Resolves an exact case-insensitive title before trying the normalized project ID.
+message ListProjectsRequest {
+  ProjectStatusFilter status = 1;
+}
+message ListProjectsResponse {
+  repeated Project projects = 1;
+}
+message PauseProjectRequest {
+  string id = 1;
+}
+
+message PauseProjectResponse {
+  Project project = 1;
+  bool changed = 2;
+}
+
+message RenameProjectRequest {
+  string current_id = 1;
+  ProjectFields fields = 2;
+}
+
+message RenameProjectResponse {
+  string id = 1;
+  string title = 2;
+  optional string source_kind = 3;
+  optional string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  string created_at = 7;
+  bool is_paused = 8;
+  optional string obsidian_vault = 9;
+  bool snapshot_enabled = 10;
+}
+
+message ResumeProjectRequest {
+  string id = 1;
+}
+
+message ResumeProjectResponse {
+  Project project = 1;
+  bool changed = 2;
+}
+
+message UpdateProjectRequest {
+  string id = 1;
+  StringPatchField source_value = 2;
+  StringPatchField obsidian_vault = 3;
+  // Omitted leaves snapshot generation unchanged.
+  optional bool snapshot_enabled = 4;
+}
+
+message UpdateProjectResponse {}

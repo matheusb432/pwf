@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+enum OrderField {
+  ORDER_FIELD_UNSPECIFIED = 0;
+  ORDER_FIELD_CREATED = 1;
+  ORDER_FIELD_ID = 2;
+  ORDER_FIELD_PROJECT_ID = 3;
+  ORDER_FIELD_PRIORITY = 4;
+  ORDER_FIELD_EFFORT = 5;
+  ORDER_FIELD_TITLE = 6;
+}
+
+enum OrderDirection {
+  ORDER_DIRECTION_UNSPECIFIED = 0;
+  ORDER_DIRECTION_ASC = 1;
+  ORDER_DIRECTION_DESC = 2;
+}
+
+message OrderSpec {
+  OrderField field = 1;
+  OrderDirection direction = 2;
+}

@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+message ClearField {}
+
+message StringPatchField {
+  oneof operation {
+    string set = 1;
+    ClearField clear = 2;
+  }
+}
+
+message StringValues {
+  repeated string values = 1;
+}
+
+message StringCollectionEdit {
+  oneof operation {
+    StringValues append = 1;
+    StringValues replace = 2;
+    ClearField clear = 3;
+  }
+}

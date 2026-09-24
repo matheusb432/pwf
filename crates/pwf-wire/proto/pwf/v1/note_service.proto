@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+import "pwf/v1/confirmation.proto";
+import "pwf/v1/field_edit.proto";
+
+service NoteService {
+  rpc AddNote(AddNoteRequest) returns (AddNoteResponse);
+  rpc ListNotes(ListNotesRequest) returns (ListNotesResponse);
+  rpc UpdateNote(UpdateNoteRequest) returns (UpdateNoteResponse);
+  rpc DeleteNote(stream DeleteNoteRequest) returns (stream DeleteNoteResponse);
+}
+
+message AddNoteRequest {
+  string project_id = 1;
+  string title = 2;
+  // Empty creates a title-only note; a nonempty value supplies its Markdown body.
+  string content = 3;
+  optional string domain = 4;
+  repeated string tags = 5;
+  repeated string sources = 6;
+  optional string verified = 7;
+  optional string date = 8;
+}
+
+enum NoteListLimitKind {
+  NOTE_LIST_LIMIT_KIND_UNSPECIFIED = 0;
+  NOTE_LIST_LIMIT_KIND_DEFAULT = 1;
+  NOTE_LIST_LIMIT_KIND_UNLIMITED = 2;
+  NOTE_LIST_LIMIT_KIND_AT_MOST = 3;
+}
+
+message ListNotesRequest {
+  string project_id = 1;
+  NoteListLimitKind limit_kind = 2;
+  uint64 limit = 3;
+}
+
+message UpdateNoteRequest {
+  string project_id = 1;
+  string selector = 2;
+  // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
+  optional string title = 3;
+  // Omitted leaves the content unchanged; a supplied value sets it and must be nonempty.
+  optional string content = 4;
+  StringPatchField domain = 5;
+  StringCollectionEdit tags = 6;
+  StringCollectionEdit sources = 7;
+  StringPatchField verified = 8;
+}
+
+message AddNoteResponse {
+  string id = 1;
+  string title = 2;
+  string project = 3;
+}
+
+message ListedNote {
+  string id = 1;
+  string title = 2;
+  bool is_verified = 3;
+}
+
+message ListNotesResponse {
+  string project = 1;
+  repeated ListedNote notes = 2;
+  uint64 hidden = 3;
+}
+
+message UpdateNoteResponse {
+  string id = 1;
+  string title = 2;
+  string project = 3;
+}
+
+message DeleteNoteStart {
+  string project_id = 1;
+  string selector = 2;
+}
+
+message DeleteNoteConfirmation {
+  string note_id = 1;
+  string project = 2;
+  string title = 3;
+}
+
+message DeletedNote {
+  string id = 1;
+  string project = 2;
+  string title = 3;
+}
+
+message AbortedNoteOperation {
+  string id = 1;
+}
+
+message DeleteNoteResult {
+  oneof outcome {
+    DeletedNote deleted = 1;
+    AbortedNoteOperation aborted = 2;
+  }
+}
+
+message DeleteNoteRequest {
+  oneof value {
+    DeleteNoteStart start = 1;
+    ConfirmationDecision decision = 2;
+  }
+}
+
+message DeleteNoteResponse {
+  oneof value {
+    DeleteNoteConfirmation preflight = 1;
+    DeleteNoteResult result = 2;
+  }
+}

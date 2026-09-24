@@ -34,11 +34,13 @@ ship *args:
 [group('quality')]
 fmt:
     cargo fmt --all
+    buf format -w
 
-# Check formatting without modifying files.
+# Check Rust and protobuf formatting without modifying files.
 [group('quality')]
 fmt-check:
     cargo fmt --all --check
+    buf format --diff --exit-code
 
 # Run repository linters.
 [group('quality')]

@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+message ConfirmationDecision {
+  bool confirmed = 1;
+}

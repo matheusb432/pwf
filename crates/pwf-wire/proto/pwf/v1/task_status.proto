@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_ACTIVE = 1;
+  TASK_STATUS_DONE = 2;
+  TASK_STATUS_CANCELLED = 3;
+  TASK_STATUS_BACKLOG = 4;
+}

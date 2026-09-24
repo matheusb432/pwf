@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+import "pwf/v1/confirmation.proto";
+import "pwf/v1/task_blocked_by.proto";
+
+service SessionService {
+  rpc PlanSession(PlanSessionRequest) returns (PlanSessionResponse);
+  rpc DispatchSession(stream DispatchSessionRequest) returns (stream DispatchSessionResponse);
+}
+
+enum Agent {
+  AGENT_UNSPECIFIED = 0;
+  AGENT_CLAUDE = 1;
+  AGENT_CODEX = 2;
+}
+
+enum SessionEffort {
+  SESSION_EFFORT_UNSPECIFIED = 0;
+  SESSION_EFFORT_LOW = 1;
+  SESSION_EFFORT_MEDIUM = 2;
+  SESSION_EFFORT_HIGH = 3;
+  SESSION_EFFORT_XHIGH = 4;
+  SESSION_EFFORT_MAX = 5;
+}
+
+message PlanSessionRequest {
+  repeated string task_ids = 1;
+  optional string pushed_prompt = 2;
+  Agent agent = 5;
+  optional string model_override = 6;
+  SessionEffort effort = 7;
+  map<string, string> environment = 8;
+}
+
+message AgentLaunch {
+  Agent agent = 1;
+  repeated string task_ids = 2;
+  string title = 3;
+  string project_path = 4;
+  string prompt = 5;
+  optional string model = 6;
+  SessionEffort effort = 7;
+  string session_name = 8;
+}
+
+message SessionPlan {
+  AgentLaunch launch = 1;
+}
+
+enum AgentAvailability {
+  AGENT_AVAILABILITY_UNSPECIFIED = 0;
+  AGENT_AVAILABILITY_MISSING = 1;
+  AGENT_AVAILABILITY_AVAILABLE = 2;
+}
+
+message AgentProbe {
+  Agent agent = 1;
+  AgentAvailability availability = 2;
+}
+
+message SessionWarning {
+  oneof value {
+    BlockedByStatus blocked_by = 1;
+    BlockedByIssue blocked_by_metadata = 2;
+  }
+}
+
+message PlanSessionResponse {
+  SessionPlan plan = 1;
+  repeated string argv = 2;
+  AgentProbe probe = 3;
+  repeated SessionWarning warnings = 4;
+}
+
+message DispatchConfirmation {
+  repeated string task_ids = 1;
+  string title = 2;
+  optional string created = 3;
+  Agent agent = 5;
+  bool has_pushed_prompt = 7;
+  optional string model = 8;
+  SessionEffort effort = 9;
+  string session_name = 10;
+}
+
+message SessionDispatchPreflight {
+  DispatchConfirmation confirmation = 1;
+  AgentProbe probe = 2;
+  repeated SessionWarning warnings = 3;
+}
+
+message DispatchSessionStart {
+  repeated string task_ids = 1;
+  optional string pushed_prompt = 2;
+  Agent agent = 5;
+  optional string model_override = 6;
+  SessionEffort effort = 7;
+  map<string, string> environment = 8;
+}
+
+message AbortedSession {}
+
+message InlineLaunch {
+  repeated string argv = 1;
+  string working_directory = 2;
+}
+
+message DispatchedSession {
+  oneof outcome {
+    AbortedSession aborted = 1;
+    InlineLaunch inline_launch = 2;
+  }
+}
+
+message DispatchSessionRequest {
+  oneof value {
+    DispatchSessionStart start = 1;
+    ConfirmationDecision decision = 2;
+  }
+}
+
+message DispatchSessionResponse {
+  oneof value {
+    SessionDispatchPreflight preflight = 1;
+    DispatchedSession result = 2;
+  }
+}
