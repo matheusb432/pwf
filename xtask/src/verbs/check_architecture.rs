@@ -12,7 +12,7 @@ struct EdgePolicy {
     reason: &'static str,
 }
 
-const EDGE_POLICIES: [EdgePolicy; 11] = [
+const EDGE_POLICIES: [EdgePolicy; 12] = [
     EdgePolicy {
         from: "pwf-models",
         label: "models stay independent",
@@ -27,6 +27,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-client",
             "pwf-infra",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-migrator",
             "pwf-server",
             "pwf-marker-sections",
@@ -43,6 +44,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-client",
             "pwf-infra",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
@@ -57,6 +59,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-client",
             "pwf-infra",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
@@ -70,6 +73,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
         forbidden: &[
             "pwf-client",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
@@ -85,6 +89,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-marker-sections",
             "pwf-application",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-infra",
             "pwf-migrator",
             "pwf-models",
@@ -103,6 +108,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-application",
             "pwf-infra",
             "pwf-migrator",
+            "pwf-nvim",
             "pwf-local-transport",
             "pwf-server",
             "pwf-wire",
@@ -111,12 +117,30 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
         reason: "the CLI must not own task-body syntax, application policy, or persistence",
     },
     EdgePolicy {
+        from: "pwf-nvim",
+        label: "neovim child stays a frontend",
+        forbidden: &[
+            "directories",
+            "pwf-marker-sections",
+            "pwf-application",
+            "pwf-cli",
+            "pwf-infra",
+            "pwf-migrator",
+            "pwf-local-transport",
+            "pwf-server",
+            "pwf-wire",
+            "sqlx",
+        ],
+        reason: "the Neovim child must reach pwf only through the client and own no application policy or persistence",
+    },
+    EdgePolicy {
         from: "pwf-local-transport",
         label: "local transport stays process-neutral",
         forbidden: &[
             "pwf-marker-sections",
             "pwf-application",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-client",
             "pwf-infra",
             "pwf-migrator",
@@ -134,6 +158,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-server",
             "pwf-client",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-local-transport",
             "xtask",
         ],
@@ -142,7 +167,13 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
     EdgePolicy {
         from: "pwf-server",
         label: "server stays a process root",
-        forbidden: &["pwf-marker-sections", "pwf-cli", "pwf-client", "xtask"],
+        forbidden: &[
+            "pwf-marker-sections",
+            "pwf-cli",
+            "pwf-client",
+            "pwf-nvim",
+            "xtask",
+        ],
         reason: "the server composes application and infrastructure without depending on frontends",
     },
     EdgePolicy {
@@ -155,6 +186,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-client",
             "pwf-infra",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-migrator",
             "pwf-server",
         ],
@@ -171,6 +203,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-client",
             "pwf-infra",
             "pwf-cli",
+            "pwf-nvim",
             "pwf-migrator",
             "pwf-server",
             "pwf-marker-sections",

@@ -9,6 +9,10 @@ use clap::Args;
 
 use crate::{paths, process};
 
+/// Executables `pwf-app` installs together with its `nvim` feature; each must match the server's
+/// release version.
+const INSTALLED_BINARIES: [&str; 3] = ["pwf", "pwf-server", "pwf-nvim"];
+
 #[derive(Args, Default)]
 pub(crate) struct InstallArgs {
     /// Cargo installation root, overriding `CARGO_INSTALL_ROOT` and `install.root`.
@@ -46,15 +50,12 @@ fn place(arguments: &InstallArgs, dry: bool) -> Result<()> {
         .join("bin")
         .join(format!("pwf{}", env::consts::EXE_SUFFIX));
     if dry {
-        eprintln!("DRY-RUN: stage pwf and pwf-server in a temporary Cargo install root");
+        eprintln!("DRY-RUN: stage pwf, pwf-server, and pwf-nvim in a temporary Cargo install root");
         eprintln!(
             "DRY-RUN: staged pwf server install --check (read-only database compatibility check)"
         );
         eprintln!("DRY-RUN: staged pwf server stop");
-        eprintln!(
-            "DRY-RUN: install both staged builds into {}",
-            root.display()
-        );
+        eprintln!("DRY-RUN: install the staged builds into {}", root.display());
         eprintln!("DRY-RUN: {} server install", cli.display());
         return Ok(());
     }
@@ -73,7 +74,7 @@ fn stage_and_install(package: &Path, root: &Path, cargo: &Path) -> Result<()> {
     )
     .context("update preflight failed; installed binaries and service were not changed")?;
     let backups = tempfile::tempdir().context("creating binary rollback directory")?;
-    for binary in ["pwf", "pwf-server"] {
+    for binary in INSTALLED_BINARIES {
         let name = format!("{binary}{}", env::consts::EXE_SUFFIX);
         let installed = root.join("bin").join(&name);
         if installed.is_file() {
@@ -98,7 +99,7 @@ fn stage_and_install(package: &Path, root: &Path, cargo: &Path) -> Result<()> {
 }
 
 fn restore_binaries(root: &Path, backups: &Path) -> Result<()> {
-    for binary in ["pwf", "pwf-server"] {
+    for binary in INSTALLED_BINARIES {
         let name = format!("{binary}{}", env::consts::EXE_SUFFIX);
         let backup = backups.join(&name);
         let installed = root.join("bin").join(&name);
@@ -124,7 +125,13 @@ fn install_binaries(package: &Path, root: &Path, cargo: &Path) -> Result<()> {
             .arg(package)
             .args(["--root"])
             .arg(root)
-            .args(["--bin", "pwf", "--bin", "pwf-server", "--target-dir"])
+            .args(["--features", "nvim"])
+            .args(
+                INSTALLED_BINARIES
+                    .iter()
+                    .flat_map(|binary| ["--bin", binary]),
+            )
+            .arg("--target-dir")
             .arg(paths::repo_root().join("target")),
     )
 }

@@ -20,6 +20,6 @@ pub(crate) fn run(arguments: &ShipArguments) -> Result<()> {
     }
     process::run(
         "release build",
-        Command::new("cargo").args(["build", "--release", "-p", "pwf-app"]),
+        Command::new("cargo").args(["build", "--release", "-p", "pwf-app", "--features", "nvim"]),
     )
 }

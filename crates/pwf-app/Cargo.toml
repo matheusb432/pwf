@@ -17,12 +17,22 @@ path = "src/bin/pwf.rs"
 name = "pwf-server"
 path = "src/bin/pwf-server.rs"
 
+[[bin]]
+name = "pwf-nvim"
+path = "src/bin/pwf-nvim.rs"
+required-features = ["nvim"]
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
 pwf-cli = { workspace = true }
+pwf-nvim = { workspace = true, optional = true }
 pwf-server = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+# Builds the `pwf-nvim` child process that the Neovim plugin starts.
+nvim = ["dep:pwf-nvim"]
 
 [lints]
 workspace = true

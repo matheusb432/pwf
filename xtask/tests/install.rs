@@ -7,7 +7,7 @@ use std::{
 };
 
 #[test]
-fn stages_and_checks_both_binaries_before_stopping_service() {
+fn stages_and_checks_binaries_before_stopping_service() {
     let (root, output) = run_install("").unwrap();
     assert!(
         output.status.success(),
@@ -33,7 +33,7 @@ fn incompatible_update_preserves_installed_binaries_and_service() {
 }
 
 #[test]
-fn failed_binary_placement_restores_previous_pair() {
+fn failed_binary_placement_restores_previous_binaries() {
     let (root, output) = run_install("placement").unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("previous binaries restored"));
@@ -53,6 +53,10 @@ fn assert_original_binaries(root: &std::path::Path) -> anyhow::Result<()> {
         fs::read_to_string(root.join("cargo root/bin/pwf-server"))?,
         "original server"
     );
+    assert_eq!(
+        fs::read_to_string(root.join("cargo root/bin/pwf-nvim"))?,
+        "original plugin child"
+    );
     Ok(())
 }
 
@@ -66,17 +70,24 @@ fn run_install(failure: &str) -> anyhow::Result<(tempfile::TempDir, Output)> {
         r#"#!/bin/bash
 set -eu
 binaries=()
+features=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --bin) binaries+=("$2"); shift 2 ;;
+    --features) features="$2"; shift 2 ;;
     --root) destination="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
-test "${binaries[*]}" = 'pwf pwf-server'
+test "${binaries[*]}" = 'pwf pwf-server pwf-nvim'
+test "$features" = nvim
 if [ "$destination" = "$PWF_TEST_ROOT" ]; then
   echo 'place binaries' >> "$INSTALL_TRACE"
-  if [ "$INSTALL_FAILURE" = placement ]; then echo partial > "$destination/bin/pwf"; exit 1; fi
+  if [ "$INSTALL_FAILURE" = placement ]; then
+    echo partial > "$destination/bin/pwf"
+    echo partial > "$destination/bin/pwf-nvim"
+    exit 1
+  fi
 else
   echo 'stage binaries' >> "$INSTALL_TRACE"
 fi
@@ -92,7 +103,7 @@ if [ "$*" = 'server install --check' ] && [ "$INSTALL_FAILURE" = preflight ]; th
 fi
 CLI
 chmod +x "$destination/bin/pwf"
-touch "$destination/bin/pwf-server"
+touch "$destination/bin/pwf-server" "$destination/bin/pwf-nvim"
 "#,
     )?;
     fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))?;
@@ -100,6 +111,7 @@ touch "$destination/bin/pwf-server"
     fs::create_dir_all(install.join("bin"))?;
     fs::write(install.join("bin/pwf"), "original CLI")?;
     fs::write(install.join("bin/pwf-server"), "original server")?;
+    fs::write(install.join("bin/pwf-nvim"), "original plugin child")?;
     let path = std::env::join_paths(std::iter::once(tools).chain(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     )))?;

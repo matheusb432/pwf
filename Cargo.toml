@@ -54,6 +54,7 @@ pwf-infra = { path = "crates/pwf-infra", version = "=0.3.0" }
 pwf-migrator = { path = "crates/pwf-migrator", version = "=0.3.0" }
 pwf-local-transport = { path = "crates/pwf-local-transport", version = "=0.3.0" }
 pwf-models = { path = "crates/pwf-models", version = "=0.3.0" }
+pwf-nvim = { path = "crates/pwf-nvim", version = "=0.3.0" }
 pwf-wire = { path = "crates/pwf-wire", version = "=0.3.0" }
 rolling-file = "0.2.0"
 serde = { version = "1", features = ["derive"] }

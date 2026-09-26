@@ -5,10 +5,10 @@ set positional-arguments
 _default:
     @just --list --unsorted
 
-# Build the release CLI and bundled server.
+# Build the release CLI, bundled server, and Neovim plugin child.
 [group('build')]
 build:
-    cargo build --release -p pwf-app
+    cargo build --release -p pwf-app --features nvim
 
 # First-time setup of the global pwf binary.
 [group('build')]
@@ -46,8 +46,9 @@ fmt-check:
 [group('quality')]
 lint:
     buf lint
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
     cargo clippy -p pwf-cli --test binary --test e2e -- -D warnings
+    cargo clippy -p pwf-nvim --test plugin -- -D warnings
 
 # Refresh or verify the committed SQLx checked-query cache.
 prepare *args:
@@ -95,7 +96,7 @@ test *args:
 
 [private]
 _test-process-build:
-    @cargo build --release -p pwf-app
+    @cargo build --release -p pwf-app --features nvim
 
 # Run CLI binary integration contracts against release process binaries.
 [group('quality')]
@@ -107,6 +108,11 @@ test-binary *args: _test-process-build
 test-e2e *args: _test-process-build
     @cargo nextest run --profile process -p pwf-cli --test e2e "$@"
 
+# Run Neovim plugin contracts in headless Neovim against release process binaries.
+[group('quality')]
+test-nvim *args: _test-process-build
+    @cargo nextest run --profile process -p pwf-nvim --test plugin "$@"
+
 # Cross-build and run Windows smoke tests in the existing dockur VM (Linux host).
 [group('quality')]
 test-windows *args:
@@ -117,6 +123,7 @@ test-windows *args:
 test-all: _test-process-build
     @cargo nextest run
     @cargo nextest run --profile process -p pwf-cli --test binary --test e2e
+    @cargo nextest run --profile process -p pwf-nvim --test plugin
     @cargo run --quiet -p xtask -- check-architecture
     @ast-grep scan
 

@@ -1,0 +1,52 @@
+--- Neovim frontend for pwf tasks.
+local M = {}
+
+--- @class pwf.Config
+--- @field cmd string[] starts the pwf-nvim child process
+--- @field task_limit integer tasks a picker lists before offering to load more
+--- @field task_scope "project"|"global" initial project scope for task and reference pickers
+--- @field task_status "active"|"all" initial status filter for task and reference pickers
+
+--- @type pwf.Config
+local defaults = {
+  cmd = { "pwf-nvim" },
+  task_limit = 5000,
+  task_scope = "project",
+  task_status = "active",
+}
+
+--- @type pwf.Config
+M.config = vim.deepcopy(defaults)
+
+--- Replaces the configuration; omitted fields keep their defaults. Setup is optional.
+--- @param opts pwf.Config?
+function M.setup(opts)
+  local config = vim.tbl_extend("force", vim.deepcopy(defaults), opts or {})
+  vim.validate("cmd", config.cmd, function(cmd)
+    return vim.islist(cmd) and #cmd > 0 and vim.iter(cmd):all(function(part)
+      return type(part) == "string"
+    end)
+  end, "a non-empty list of strings")
+  vim.validate("task_limit", config.task_limit, function(limit)
+    return type(limit) == "number" and limit % 1 == 0 and limit >= 1 and limit <= 100000
+  end, "an integer from 1 to 100000")
+  vim.validate("task_scope", config.task_scope, function(scope)
+    return scope == "project" or scope == "global"
+  end, '"project" or "global"')
+  vim.validate("task_status", config.task_status, function(status)
+    return status == "active" or status == "all"
+  end, '"active" or "all"')
+  M.config = config
+end
+
+--- Picks a task and opens its Markdown file.
+function M.tasks()
+  require("pwf.picker").tasks()
+end
+
+--- Picks a task and inserts `[[ID]]` at the cursor.
+function M.insert_reference()
+  require("pwf.picker").reference(require("pwf.reference").target())
+end
+
+return M
