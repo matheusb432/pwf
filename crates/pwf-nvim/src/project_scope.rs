@@ -4,6 +4,20 @@ use std::path::{Path, PathBuf};
 
 use pwf_client::{ClientError, pb, project::ProjectClient};
 
+pub(crate) async fn active_projects(
+    projects: &ProjectClient,
+) -> Result<Vec<pb::Project>, ClientError> {
+    let mut response = projects
+        .list_projects(pb::ListProjectsRequest {
+            status: pb::ProjectStatusFilter::ActiveOnly as i32,
+        })
+        .await?;
+    response
+        .projects
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(response.projects)
+}
+
 /// A registered directory that claims every path below it for one project.
 #[derive(Debug)]
 struct ProjectRoot {
@@ -11,36 +25,31 @@ struct ProjectRoot {
     path: PathBuf,
 }
 
-/// Returns the active project owning the first context path that a project directory contains.
-pub(crate) async fn infer_project(
-    projects: &ProjectClient,
+pub(crate) fn infer_from_projects(
+    projects: &[pb::Project],
     context_paths: &[PathBuf],
-) -> Result<Option<String>, ClientError> {
-    let response = projects
-        .list_projects(pb::ListProjectsRequest {
-            status: pb::ProjectStatusFilter::ActiveOnly as i32,
-        })
-        .await?;
+) -> Option<String> {
     let home = std::env::home_dir();
-    let roots = project_roots(response.projects, home.as_deref());
+    let roots = project_roots(projects, home.as_deref());
     let context_paths = context_paths
         .iter()
         .map(|path| canonical_path(path))
         .collect::<Vec<_>>();
-    Ok(select_project(&roots, &context_paths).map(str::to_owned))
+    select_project(&roots, &context_paths).map(str::to_owned)
 }
 
-fn project_roots(projects: Vec<pb::Project>, home: Option<&Path>) -> Vec<ProjectRoot> {
+fn project_roots(projects: &[pb::Project], home: Option<&Path>) -> Vec<ProjectRoot> {
     projects
-        .into_iter()
+        .iter()
         .flat_map(|project| {
             let source = project
                 .source_value
+                .as_deref()
                 .filter(|_| project.source_kind.as_deref() == Some("directory"));
-            [Some(project.tasks_path), source]
+            [Some(project.tasks_path.as_str()), source]
                 .into_iter()
                 .flatten()
-                .filter_map(|raw| expand_home(&raw, home))
+                .filter_map(|raw| expand_home(raw, home))
                 .map(|path| ProjectRoot {
                     project_id: project.id.clone(),
                     path: canonical_path(&path),
@@ -65,7 +74,7 @@ fn select_project<'roots>(
 }
 
 /// Resolves the registry's `~` shorthand the same way the server resolves project paths.
-fn expand_home(raw: &str, home: Option<&Path>) -> Option<PathBuf> {
+pub(crate) fn expand_home(raw: &str, home: Option<&Path>) -> Option<PathBuf> {
     if raw == "~" {
         return home.map(Path::to_path_buf);
     }
@@ -97,7 +106,7 @@ mod tests {
     #[test]
     fn earlier_context_path_wins_over_the_working_directory() {
         let roots = project_roots(
-            vec![
+            &[
                 project("NOTE", "/vault/notes", None),
                 project("CODE", "/vault/code-tasks", Some("/src/code")),
             ],
@@ -118,7 +127,7 @@ mod tests {
     #[test]
     fn deepest_project_directory_owns_nested_paths() {
         let roots = project_roots(
-            vec![
+            &[
                 project("MONO", "/tasks/mono", Some("/src")),
                 project("PART", "/tasks/part", Some("/src/part")),
             ],
@@ -139,7 +148,7 @@ mod tests {
     #[test]
     fn home_shorthand_resolves_against_the_home_directory() {
         let roots = project_roots(
-            vec![project("HOME", "~/tasks/home", None)],
+            &[project("HOME", "~/tasks/home", None)],
             Some(Path::new("/users/me")),
         );
 

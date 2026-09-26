@@ -37,8 +37,12 @@ pub async fn execute(
     let AddTaskFromFile {
         project_id,
         source_file,
+        title,
     } = command;
-    let title = title_from_source_file(&source_file)?;
+    let title = match title {
+        Some(title) => title,
+        None => title_from_source_file(&source_file)?,
+    };
     let body = source_files
         .read_task_source_file(&source_file)
         .map_err(|source| AddTaskFromFileError::ReadSourceFile {

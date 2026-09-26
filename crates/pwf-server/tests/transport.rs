@@ -644,7 +644,10 @@ impl RecordingPrompt {
 impl ConfirmationPrompt for RecordingPrompt {
     type Error = Infallible;
 
-    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error> {
+    fn confirm(
+        &self,
+        confirmation: &Confirmation,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
         let operation = match confirmation {
             Confirmation::DeleteNote(_) => "note-remove",
             Confirmation::DeleteTask(_) => "remove",
@@ -652,7 +655,7 @@ impl ConfirmationPrompt for RecordingPrompt {
             Confirmation::DispatchSession(_) => "session",
         };
         with_seen(&self.seen, |seen| seen.push(operation));
-        Ok(self.confirmed)
+        std::future::ready(Ok(self.confirmed))
     }
 }
 
@@ -764,6 +767,7 @@ async fn v1_create_task_from_file_derives_title_and_preserves_body() -> anyhow::
     .create_task_from_file(Request::new(pb::CreateTaskFromFileRequest {
         project_id: "FOO".to_string(),
         source_file: source_file.to_string_lossy().into_owned(),
+        title: None,
     }))
     .await?
     .into_inner();
@@ -774,6 +778,38 @@ async fn v1_create_task_from_file_derives_title_and_preserves_body() -> anyhow::
     assert_eq!(record.title, "Imported task");
     assert_eq!(record.body, source);
     assert!(record.source.ends_with(source), "{:?}", record.source);
+    let mut client = pb::task_service_client::TaskServiceClient::with_interceptor(
+        server.channel().await?,
+        server::ReleaseRequest,
+    );
+    let request = pb::CreateTaskFromFileRequest {
+        project_id: "FOO".to_string(),
+        source_file: source_file.to_string_lossy().into_owned(),
+        title: Some("  import / editor: \"draft\"  ".to_string()),
+    };
+    let created = client
+        .create_task_from_file(request.clone())
+        .await?
+        .into_inner();
+    let record = task_record(&server, &created.id).await?;
+    assert_eq!(record.title, "import / editor: \"draft\"");
+    assert_eq!(record.body, source);
+    let blank = client
+        .create_task_from_file(pb::CreateTaskFromFileRequest {
+            title: Some(" \t ".into()),
+            ..request.clone()
+        })
+        .await?
+        .into_inner();
+    assert_eq!(task_record(&server, &blank.id).await?.title, "n/a");
+    let error = client
+        .create_task_from_file(pb::CreateTaskFromFileRequest {
+            title: Some("x".repeat(201)),
+            ..request
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
     server.finish().await
 }
 
@@ -1546,9 +1582,12 @@ struct VaultPrompt {
 }
 impl ConfirmationPrompt for VaultPrompt {
     type Error = std::io::Error;
-    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error> {
+    fn confirm(
+        &self,
+        confirmation: &Confirmation,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
         let Confirmation::DeleteTask(confirmation) = confirmation else {
-            return Err(std::io::Error::other("expected delete preflight"));
+            return std::future::ready(Err(std::io::Error::other("expected delete preflight")));
         };
         assert_eq!(
             confirmation.obsidian_vault.as_deref(),
@@ -1563,7 +1602,7 @@ impl ConfirmationPrompt for VaultPrompt {
                     .as_ref()
             )
         );
-        Ok(false)
+        std::future::ready(Ok(false))
     }
 }
 

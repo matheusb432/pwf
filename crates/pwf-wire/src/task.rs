@@ -78,8 +78,10 @@ pub struct AddTask {
 pub struct AddTaskFromFile {
     /// Destination project ID.
     pub project_id: ProjectId,
-    /// Local source file whose stem and contents become the task title and body.
+    /// Local source file whose contents become the task body.
     pub source_file: PathBuf,
+    /// Omission derives the title from the source filename stem.
+    pub title: Option<TaskTitle>,
 }
 
 /// Copies task content and metadata into a new active task.

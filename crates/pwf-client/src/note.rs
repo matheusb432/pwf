@@ -75,6 +75,7 @@ impl NoteClient {
             Some(pb::delete_note_response::Value::Preflight(preflight)) => {
                 let confirmed = prompt
                     .confirm(&Confirmation::DeleteNote(preflight))
+                    .await
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
                     .send(pb::DeleteNoteRequest {

@@ -7,7 +7,7 @@
 use rmpv::Value;
 use serde::de::DeserializeOwned;
 
-use crate::{OperationError, task_file::TaskFileParams, task_list::ListTasksParams};
+use crate::{OperationError, record_list::ListRecordsParams};
 
 pub(crate) const REQUEST_NOTIFICATION: &str = "request";
 pub(crate) const REPLY_METHOD: &str = "nvim_exec_lua";
@@ -15,8 +15,7 @@ const RESOLVE_LUA: &str = "return require('pwf.client').resolve(...)";
 
 #[derive(Debug)]
 pub(crate) enum Operation {
-    ListTasks(ListTasksParams),
-    TaskFile(TaskFileParams),
+    ListRecords(ListRecordsParams),
 }
 
 #[derive(Debug)]
@@ -42,8 +41,7 @@ fn parse_operation(
         .ok_or_else(|| OperationError::InvalidRequest("missing operation name".to_string()))?;
     let params = params.unwrap_or_else(|| Value::Map(Vec::new()));
     match name {
-        "list_tasks" => decode(name, params).map(Operation::ListTasks),
-        "task_file" => decode(name, params).map(Operation::TaskFile),
+        "list_records" => decode(name, params).map(Operation::ListRecords),
         unknown => Err(OperationError::InvalidRequest(format!(
             "unknown operation {unknown:?}"
         ))),
@@ -79,7 +77,7 @@ mod tests {
     fn malformed_parameters_still_carry_the_request_id() {
         let request = parse_request(vec![
             Value::from(7),
-            Value::from("list_tasks"),
+            Value::from("list_records"),
             Value::Map(vec![(Value::from("status"), Value::from("sometimes"))]),
         ])
         .unwrap();
@@ -87,7 +85,7 @@ mod tests {
         assert_eq!(request.id, 7);
         assert!(matches!(
             request.operation,
-            Err(OperationError::InvalidRequest(message)) if message.starts_with("list_tasks: ")
+            Err(OperationError::InvalidRequest(message)) if message.starts_with("list_records: ")
         ));
     }
 }

@@ -5,12 +5,8 @@ end
 vim.g.loaded_pwf = true
 
 local subcommands = {
-  tasks = function()
-    require("pwf").tasks()
-  end,
-  reference = function()
-    require("pwf").insert_reference()
-  end,
+  tasks = function() require("pwf").tasks() end,
+  notes = function() require("pwf").notes() end,
 }
 
 vim.api.nvim_create_user_command("Pwf", function(command)
@@ -23,7 +19,7 @@ vim.api.nvim_create_user_command("Pwf", function(command)
   run()
 end, {
   nargs = "?",
-  desc = "Open a pwf picker",
+  desc = "Find pwf tasks, notes, and contents",
   complete = function(lead)
     local names = vim.tbl_filter(function(name)
       return vim.startswith(name, lead)
@@ -34,9 +30,4 @@ end, {
 })
 
 vim.keymap.set("n", "<Plug>(pwf-tasks)", subcommands.tasks, { desc = "pwf: open a task" })
-vim.keymap.set(
-  { "n", "i" },
-  "<Plug>(pwf-insert-reference)",
-  subcommands.reference,
-  { desc = "pwf: insert a task reference" }
-)
+vim.keymap.set("n", "<Plug>(pwf-notes)", subcommands.notes, { desc = "pwf: open a note" })

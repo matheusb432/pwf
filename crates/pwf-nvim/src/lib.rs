@@ -4,9 +4,10 @@
 //! the channel. Stdout carries only protocol messages; diagnostics go to stderr.
 
 mod msgpack_rpc;
+mod note_list;
 mod project_scope;
 mod protocol;
-mod task_file;
+mod record_list;
 mod task_list;
 
 use std::{sync::Arc, time::Duration};
@@ -23,7 +24,7 @@ use crate::{
 };
 
 /// Plugin protocol version this executable serves; `lua/pwf/client.lua` requests it on start.
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 5;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUESTS_IN_FLIGHT_MAX: usize = 16;
 
@@ -76,10 +77,14 @@ enum OperationError {
     InvalidRequest(String),
     #[error("pwf-server returned an invalid task: {0}")]
     InvalidTask(String),
+    #[error(transparent)]
+    RecordList(#[from] record_list::RecordListError),
+    #[error("could not finish preparing picker records: {0}")]
+    RecordWorker(#[from] tokio::task::JoinError),
     #[error("pwf-server returned more task-list pages than the requested limit allows")]
     UnboundedPages,
-    #[error("pwf-server did not answer within {} seconds", REQUEST_TIMEOUT.as_secs())]
-    TimedOut,
+    #[error("pwf-server did not finish within {0} seconds")]
+    TimedOut(u64),
     #[error(
         "pwf-nvim is already serving {REQUESTS_IN_FLIGHT_MAX} requests; retry after they finish"
     )]
@@ -118,9 +123,8 @@ impl State {
     async fn execute(&self, operation: Operation) -> Result<Value, OperationError> {
         let client = self.client().await?;
         match operation {
-            Operation::ListTasks(params) => Ok(task_list::execute(&client, params).await?.into()),
-            Operation::TaskFile(params) => {
-                Ok(task_file::execute(&client.task(), params).await?.into())
+            Operation::ListRecords(params) => {
+                Ok(record_list::execute(&client, params).await?.into())
             }
         }
     }
@@ -159,7 +163,7 @@ fn dispatch(state: &Arc<State>, writer: &Arc<StdoutWriter>, notification: Notifi
             (Ok(_permit), Ok(operation)) => {
                 tokio::time::timeout(REQUEST_TIMEOUT, state.execute(operation))
                     .await
-                    .unwrap_or(Err(OperationError::TimedOut))
+                    .unwrap_or(Err(OperationError::TimedOut(REQUEST_TIMEOUT.as_secs())))
             }
         };
         let release_mismatch = matches!(

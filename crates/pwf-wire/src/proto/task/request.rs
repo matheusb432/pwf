@@ -59,6 +59,10 @@ impl TryFrom<pb::CreateTaskFromFileRequest> for task::AddTaskFromFile {
             project_id: ProjectId::try_new(request.project_id)
                 .map_err(|error| invalid("project_id", error))?,
             source_file: request.source_file.into(),
+            title: request
+                .title
+                .map(|title| TaskTitle::try_new(title).map_err(|error| invalid("title", error)))
+                .transpose()?,
         })
     }
 }

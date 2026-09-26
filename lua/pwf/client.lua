@@ -5,7 +5,7 @@
 local M = {}
 
 --- Must match `PROTOCOL_VERSION` in `crates/pwf-nvim/src/lib.rs`.
-local PROTOCOL_VERSION = 1
+local PROTOCOL_VERSION = 5
 --- Exceeds the child's 10-second request timeout, so the child's own error normally arrives first.
 local REQUEST_TIMEOUT_MS = 15000
 local STDERR_LINES_MAX = 20

@@ -14,7 +14,10 @@ pub enum Confirmation {
 pub trait ConfirmationPrompt: Send + Sync + 'static {
     type Error: Error + Send + Sync + 'static;
 
-    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error>;
+    fn confirm(
+        &self,
+        confirmation: &Confirmation,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send;
 }
 
 #[derive(Debug, thiserror::Error)]

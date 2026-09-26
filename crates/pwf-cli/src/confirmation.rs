@@ -43,14 +43,17 @@ impl CliConfirmationClient {
 impl ConfirmationPrompt for CliConfirmationClient {
     type Error = dialoguer::Error;
 
-    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error> {
-        match self.mode {
+    fn confirm(
+        &self,
+        confirmation: &Confirmation,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
+        std::future::ready(match self.mode {
             ConfirmationMode::AssumeYes => Ok(true),
             ConfirmationMode::Prompt => self
                 .console
                 .confirm(&render::confirmation_dialog(confirmation))
                 .map(|answer| answer == ConfirmationAnswer::Accepted),
-        }
+        })
     }
 }
 

@@ -35,6 +35,7 @@ pub(super) async fn run(
         .create_task_from_file(CreateTaskFromFileRequest {
             project_id: project_id.to_string(),
             source_file,
+            title: None,
         })
         .await?;
     render_mutation(

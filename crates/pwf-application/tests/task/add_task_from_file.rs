@@ -29,6 +29,7 @@ async fn add_from_file_uses_the_filename_and_authored_body(pool: sqlx::SqlitePoo
         AddTaskFromFile {
             project_id: "FOO".parse().unwrap(),
             source_file: source_file.clone(),
+            title: None,
         },
         &SourceFileReader {
             expected_path: source_file,

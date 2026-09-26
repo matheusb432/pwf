@@ -3039,6 +3039,9 @@ pub struct CreateTaskFromFileRequest {
     pub project_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub source_file: ::prost::alloc::string::String,
+    /// Omission derives the title from source_file's filename stem.
+    #[prost(string, optional, tag = "3")]
+    pub title: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Creates an active task with the source title, body, tags, tiers, and blockers.
 /// Lifecycle timestamps and commits belong to the new task and are not copied.

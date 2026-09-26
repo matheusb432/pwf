@@ -1,11 +1,11 @@
---- Neovim frontend for pwf tasks.
+--- Neovim frontend for pwf tasks and notes.
 local M = {}
 
 --- @class pwf.Config
 --- @field cmd string[] starts the pwf-nvim child process
---- @field task_limit integer tasks a picker lists before offering to load more
---- @field task_scope "project"|"global" initial project scope for task and reference pickers
---- @field task_status "active"|"all" initial status filter for task and reference pickers
+--- @field task_limit integer records a picker lists before offering to load more
+--- @field task_scope "project"|"global" initial project scope
+--- @field task_status "active"|"backlog"|"done"|"cancelled"|"all" initial task status filter; notes remain visible
 
 --- @type pwf.Config
 local defaults = {
@@ -34,19 +34,16 @@ function M.setup(opts)
     return scope == "project" or scope == "global"
   end, '"project" or "global"')
   vim.validate("task_status", config.task_status, function(status)
-    return status == "active" or status == "all"
-  end, '"active" or "all"')
+    return vim.tbl_contains({ "active", "backlog", "done", "cancelled", "all" }, status)
+  end, '"active", "backlog", "done", "cancelled", or "all"')
   M.config = config
 end
 
---- Picks a task and opens its Markdown file.
+--- Searches tasks, notes, and their saved contents in one picker.
 function M.tasks()
-  require("pwf.picker").tasks()
+  require("pwf.picker").open()
 end
 
---- Picks a task and inserts `[[ID]]` at the cursor.
-function M.insert_reference()
-  require("pwf.picker").reference(require("pwf.reference").target())
-end
+M.notes = M.tasks
 
 return M

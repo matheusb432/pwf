@@ -269,25 +269,28 @@ struct SessionPrompt {
 impl ConfirmationPrompt for SessionPrompt {
     type Error = dialoguer::Error;
 
-    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error> {
+    fn confirm(
+        &self,
+        confirmation: &Confirmation,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
         let Confirmation::DispatchSession(preflight) = confirmation else {
-            return Ok(false);
+            return std::future::ready(Ok(false));
         };
         emit_session_warnings(&preflight.warnings);
         if let Some(probe) = &preflight.probe {
             render_probe(*probe);
         }
         let Some(confirmation) = &preflight.confirmation else {
-            return Ok(false);
+            return std::future::ready(Ok(false));
         };
         eprintln!("running {} inline...", confirmation.session_name);
-        match self.mode {
+        std::future::ready(match self.mode {
             ConfirmationMode::AssumeYes => Ok(true),
             ConfirmationMode::Prompt => self
                 .console
                 .confirm(&render_session_confirmation(confirmation))
                 .map(|answer| answer == ConfirmationAnswer::Accepted),
-        }
+        })
     }
 }
 

@@ -204,6 +204,7 @@ impl TaskClient {
                     .ok_or_else(|| protocol("delete preflight is missing its confirmation"))?;
                 let confirmed = prompt
                     .confirm(&Confirmation::DeleteTask(confirmation))
+                    .await
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
                     .send(pb::DeleteTaskRequest {
@@ -263,6 +264,7 @@ impl TaskClient {
                     .ok_or_else(|| protocol("activate preflight is missing its confirmation"))?;
                 let confirmed = prompt
                     .confirm(&Confirmation::ActivateTask(confirmation))
+                    .await
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
                     .send(pb::ActivateTaskRequest {
@@ -321,6 +323,7 @@ impl TaskClient {
             Some(pb::dispatch_session_response::Value::Preflight(preflight)) => {
                 let confirmed = prompt
                     .confirm(&Confirmation::DispatchSession(preflight))
+                    .await
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
                     .send(pb::DispatchSessionRequest {

@@ -78,6 +78,8 @@ message CreateTaskRequest {
 message CreateTaskFromFileRequest {
   string project_id = 1;
   string source_file = 2;
+  // Omission derives the title from source_file's filename stem.
+  optional string title = 3;
 }
 
 // Creates an active task with the source title, body, tags, tiers, and blockers.
