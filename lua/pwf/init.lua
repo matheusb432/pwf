@@ -39,7 +39,7 @@ function M.setup(opts)
   M.config = config
 end
 
---- Searches tasks, notes, and their saved contents in one picker.
+--- Searches task and note names, with a toggle for their saved contents.
 function M.tasks()
   require("pwf.picker").open()
 end

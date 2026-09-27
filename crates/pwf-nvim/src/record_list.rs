@@ -1,4 +1,4 @@
-//! Prepares one picker dataset: record summaries followed by saved Markdown body lines.
+//! Prepares record summaries and saved Markdown body lines for the Neovim picker.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -56,7 +56,8 @@ pub(crate) enum RecordListError {
 
 pub(crate) struct RecordListing {
     project: Option<String>,
-    entries: Vec<String>,
+    names: Vec<String>,
+    contents: Vec<String>,
     files: BTreeMap<String, String>,
     hidden: u64,
 }
@@ -65,8 +66,12 @@ impl From<RecordListing> for Value {
     fn from(listing: RecordListing) -> Self {
         let mut fields = vec![
             (
-                Value::from("entries"),
-                Value::Array(listing.entries.into_iter().map(Value::from).collect()),
+                Value::from("names"),
+                Value::Array(listing.names.into_iter().map(Value::from).collect()),
+            ),
+            (
+                Value::from("contents"),
+                Value::Array(listing.contents.into_iter().map(Value::from).collect()),
             ),
             (
                 Value::from("files"),
@@ -169,11 +174,11 @@ fn collect(
     }
     let mut listing = RecordListing {
         project: selected,
-        entries: Vec::new(),
+        names: Vec::new(),
+        contents: Vec::new(),
         files: BTreeMap::new(),
         hidden,
     };
-    let mut content = Vec::new();
     bytes = 0;
     for (id, record) in records {
         if started.elapsed() >= REQUEST_TIMEOUT {
@@ -181,7 +186,7 @@ fn collect(
         }
         listing.files.insert(id.clone(), record.path);
         push_entry(
-            &mut listing.entries,
+            &mut listing.names,
             format!("{id}\t1\t{}", clean_text(&record.summary)),
             &mut bytes,
         )?;
@@ -191,14 +196,12 @@ fn collect(
             }
             let line = record.body_line_start + offset;
             push_entry(
-                &mut content,
-                format!("{id}\t{line}\t[content] {id}:{line} {}", clean_text(text)),
+                &mut listing.contents,
+                format!("{id}\t{line}\t{id}:{line} {}", clean_text(text)),
                 &mut bytes,
             )?;
         }
     }
-    // Empty queries show record summaries first; fzf filters both kinds without a reload.
-    listing.entries.extend(content);
     Ok(listing)
 }
 
@@ -248,7 +251,7 @@ fn read_record(
     let matched = if let Some(id) = note_id {
         notes
             .get(id.as_ref())
-            .map(|summary| (id.to_string(), format!("[note] {summary}")))
+            .map(|summary| (id.to_string(), summary.clone()))
     } else if metadata.kind.as_deref() != Some("note") {
         metadata
             .id
@@ -256,7 +259,7 @@ fn read_record(
             .and_then(|id| {
                 tasks
                     .get(&(project.title.clone(), id.to_string()))
-                    .map(|summary| (id.to_string(), format!("[task] {summary}")))
+                    .map(|summary| (id.to_string(), summary.clone()))
             })
     } else {
         None

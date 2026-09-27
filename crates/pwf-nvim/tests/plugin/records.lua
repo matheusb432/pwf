@@ -5,9 +5,11 @@ local listing = await(function(done)
 end)
 assert(not listing.err, listing.err)
 local content, note
-for _, entry in ipairs(listing.value.entries) do
+for _, entry in ipairs(listing.value.contents) do
   if entry:find("body-only-needle", 1, true) then content = records.resolve(listing.value, entry) end
-  if entry:find("[note]", 1, true) then note = records.resolve(listing.value, entry) end
+end
+for _, entry in ipairs(listing.value.names) do
+  if entry:find("ALP-NOTE-0001", 1, true) then note = records.resolve(listing.value, entry) end
 end
 assert(content and note)
 assert(not records.open(content, "edit"))

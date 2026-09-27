@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// Plugin protocol version this executable serves; `lua/pwf/client.lua` requests it on start.
-const PROTOCOL_VERSION: u32 = 5;
+const PROTOCOL_VERSION: u32 = 6;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUESTS_IN_FLIGHT_MAX: usize = 16;
 

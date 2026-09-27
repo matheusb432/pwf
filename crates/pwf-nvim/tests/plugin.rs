@@ -15,13 +15,12 @@ use serde_json::{Value, json};
 use support::{Fixture, release_binary};
 
 fn summaries(listing: &Value) -> anyhow::Result<Vec<String>> {
-    let mut entries = listing["value"]["entries"]
+    let mut entries = listing["value"]["names"]
         .as_array()
-        .with_context(|| format!("listing has no entries: {listing}"))?
+        .with_context(|| format!("listing has no names: {listing}"))?
         .iter()
         .filter_map(Value::as_str)
         .filter_map(|entry| entry.splitn(3, '\t').nth(2))
-        .filter(|entry| !entry.starts_with("[content]"))
         .map(str::to_string)
         .collect::<Vec<_>>();
     entries.sort();
@@ -70,8 +69,8 @@ fn combines_tasks_and_notes_with_project_and_status_filters() -> anyhow::Result<
         assert_eq!(
             summaries(&result[status])?,
             [
-                "[note] ALP-NOTE-0001 project note".to_string(),
-                format!("[task] {id} {title} alpha{suffix}")
+                format!("{id} {title} alpha{suffix}"),
+                "ALP-NOTE-0001 project note".to_string()
             ]
         );
         assert_eq!(result[status]["value"]["project"], "ALP");
@@ -135,43 +134,62 @@ fn content_rows_share_the_listing_and_open_the_real_file_at_the_matching_line() 
     )?;
     fs::write(directory.join(".gitignore"), "*.md\n")?;
     let result = fixture.run_lua(&alpha.source, include_str!("plugin/records.lua"))?;
-    let entries = result["listing"]["value"]["entries"]
+    let names = result["listing"]["value"]["names"]
         .as_array()
-        .context("missing entries")?;
+        .context("missing names")?;
+    let contents = result["listing"]["value"]["contents"]
+        .as_array()
+        .context("missing contents")?;
     let line = source
         .lines()
         .position(|line| line == "pré body-only-needle")
         .unwrap()
         + 1;
-    assert!(entries.contains(&json!(format!(
-        "{active}\t{line}\t[content] {active}:{line} pré body-only-needle"
+    assert!(contents.contains(&json!(format!(
+        "{active}\t{line}\t{active}:{line} pré body-only-needle"
     ))));
-    assert!(entries.iter().any(|entry| {
-        entry
-            .as_str()
-            .unwrap()
-            .contains("[note] ALP-NOTE-0001 note")
-    }));
-    assert!(entries.iter().any(
-        |entry| entry.as_str().unwrap().contains("[content] ALP-NOTE-0001:")
-            && entry.as_str().unwrap().contains("note-body-needle")
-    ));
-    assert!(entries.iter().any(|entry| {
+    assert!(
+        names
+            .iter()
+            .any(|entry| { entry.as_str().unwrap().contains("ALP-NOTE-0001 note") })
+    );
+    assert!(
+        contents
+            .iter()
+            .any(|entry| entry.as_str().unwrap().contains("ALP-NOTE-0001:")
+                && entry.as_str().unwrap().contains("note-body-needle"))
+    );
+    assert!(contents.iter().any(|entry| {
         entry
             .as_str()
             .unwrap()
             .contains("shell $(pwd) ' -- literal")
     }));
     assert!(
-        !entries
+        !contents
             .iter()
             .any(|entry| entry.as_str().unwrap().contains("excluded-body-needle"))
     );
     assert!(
-        !entries
+        !contents
             .iter()
-            .any(|entry| entry.as_str().unwrap().contains("[content]")
-                && entry.as_str().unwrap().contains("frontmatter-only"))
+            .any(|entry| entry.as_str().unwrap().contains("frontmatter-only"))
+    );
+    assert!(
+        names
+            .iter()
+            .all(|entry| !entry.as_str().unwrap().contains("body-only-needle"))
+    );
+    assert!(
+        names
+            .iter()
+            .all(|entry| !entry.as_str().unwrap().contains("[task]")
+                && !entry.as_str().unwrap().contains("[note]"))
+    );
+    assert!(
+        contents
+            .iter()
+            .all(|entry| !entry.as_str().unwrap().contains("[content]"))
     );
     assert_eq!(result["opened"], json!(renamed));
     assert_eq!(result["cursor"], json!([line, 0]));
@@ -186,6 +204,56 @@ fn content_rows_share_the_listing_and_open_the_real_file_at_the_matching_line() 
     );
     assert_eq!(result["cwd_unchanged"], true);
     assert_eq!(fs::read_to_string(renamed)?, source);
+    Ok(())
+}
+
+#[test]
+fn picker_switches_between_names_and_contents_with_ctrl_g() -> anyhow::Result<()> {
+    let fixture = Fixture::with_server()?;
+    let alpha = fixture.add_project("ALP", "alpha")?;
+    let task = fixture.add_task(&alpha, "title-only-needle")?;
+    let task_path = fixture.task_path(&task)?;
+    let mut source = fs::read_to_string(&task_path)?;
+    source.push_str("body-only-needle\n");
+    fs::write(task_path, source)?;
+    let result = fixture.run_lua(&alpha.source, r#"
+        local views, options = {}, nil
+        package.loaded["fzf-lua"] = {
+          fzf_exec = function(entries, opts)
+            options = opts
+            table.insert(views, { entries = entries, prompt = opts.prompt, query = opts.query, title = opts.winopts.title })
+          end,
+        }
+        require("pwf.picker").open()
+        assert(vim.wait(20000, function() return #views == 1 end, 10))
+        assert(options.actions["alt-g"])
+        options.actions["ctrl-g"].fn({}, { last_query = "needle" })
+        assert(vim.wait(20000, function() return #views == 2 end, 10))
+        options.actions["ctrl-g"].fn({}, { last_query = "body-only-needle" })
+        assert(vim.wait(20000, function() return #views == 3 end, 10))
+        options.actions["alt-g"].fn({}, { last_query = "title-only-needle" })
+        assert(vim.wait(20000, function() return #views == 4 end, 10))
+        return views
+    "#)?;
+    let views = result.as_array().context("missing picker views")?;
+    assert!(
+        views[0]["entries"]
+            .to_string()
+            .contains("title-only-needle")
+    );
+    assert!(!views[0]["entries"].to_string().contains("body-only-needle"));
+    assert!(views[1]["entries"].to_string().contains("body-only-needle"));
+    assert!(
+        !views[1]["entries"]
+            .to_string()
+            .contains("title-only-needle")
+    );
+    assert_eq!(views[1]["query"], "needle");
+    assert!(views[1]["prompt"].as_str().unwrap().contains("Content"));
+    assert_eq!(views[2]["entries"], views[0]["entries"]);
+    assert_eq!(views[2]["query"], "body-only-needle");
+    assert_eq!(views[3]["query"], "title-only-needle");
+    assert!(views[3]["title"].as_str().unwrap().contains("all projects"));
     Ok(())
 }
 
@@ -250,7 +318,7 @@ fn child_rejects_a_different_plugin_protocol() -> anyhow::Result<()> {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("serves plugin protocol 5, but the plugin requested 999"),
+        stderr.contains("serves plugin protocol 6, but the plugin requested 999"),
         "{stderr}"
     );
     Ok(())
