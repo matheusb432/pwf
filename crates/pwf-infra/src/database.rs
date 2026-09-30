@@ -10,6 +10,7 @@ use sqlx::{
 };
 
 mod migrations;
+pub mod snapshot;
 
 pub use migrations::{
     MigrationCompatibility, check_database_compatible, check_database_ready, migrate_database,

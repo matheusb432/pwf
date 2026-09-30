@@ -1,5 +1,8 @@
 use std::fs;
 
+#[cfg(target_os = "linux")]
+use support::systemctl_stub;
+
 use super::support;
 
 #[cfg(target_os = "linux")]
@@ -316,46 +319,6 @@ fn installation_migrates_registration_and_uninstall_retains_data() {
             .unwrap()
             .contains("daemon-reload")
     );
-}
-
-#[cfg(target_os = "linux")]
-fn systemctl_stub(root: &std::path::Path) -> std::ffi::OsString {
-    use std::os::unix::fs::PermissionsExt as _;
-    let tools = root.join("tools");
-    fs::create_dir(&tools).unwrap();
-    let script = tools.join("systemctl");
-    fs::write(
-        &script,
-        r#"#!/bin/bash
-set -eu
-printf '%s\n' "$*" >> "$PWF_SERVICE_TEST_ROOT/calls"
-case "$2" in
-  show)
-    if [ -f "$PWF_SERVICE_TEST_ROOT/state" ]; then
-      printf 'LoadState=loaded\nActiveState=%s\nMainPID=0\n' "$(cat "$PWF_SERVICE_TEST_ROOT/state")"
-    else
-      printf 'LoadState=not-found\nActiveState=inactive\nMainPID=0\n'
-    fi
-    if [ -f "$PWF_SERVICE_TEST_ROOT/properties" ]; then cat "$PWF_SERVICE_TEST_ROOT/properties"; fi
-    ;;
-  show-environment) ;;
-  stop|enable) printf inactive > "$PWF_SERVICE_TEST_ROOT/state" ;;
-  start) printf active > "$PWF_SERVICE_TEST_ROOT/state" ;;
-  disable) rm "$PWF_SERVICE_TEST_ROOT/state" ;;
-  daemon-reload) ;;
-  *) exit 42 ;;
-esac
-"#,
-    )
-    .unwrap();
-    fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
-    let journal = tools.join("journalctl");
-    fs::write(&journal, "#!/bin/sh\necho 'fixture startup failure'\n").unwrap();
-    fs::set_permissions(journal, fs::Permissions::from_mode(0o755)).unwrap();
-    std::env::join_paths(
-        std::iter::once(tools).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap()
 }
 
 #[cfg(target_os = "linux")]

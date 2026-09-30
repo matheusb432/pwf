@@ -1,6 +1,7 @@
 //! Exposes pwf command parsing and shared CLI support.
 
 pub mod command;
+pub mod data;
 pub mod doctor;
 mod entrypoint;
 pub mod error;

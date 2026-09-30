@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use sqlx::{SqliteConnection, SqlitePool};
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
+pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 const DATABASE_MIGRATION_WAIT_MAX: Duration = Duration::from_secs(10);
 
 #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
@@ -70,6 +70,14 @@ pub async fn check_database_compatible(
             reason: error.to_string(),
         },
     })
+}
+
+pub(crate) async fn applied_schema_version(pool: &SqlitePool) -> anyhow::Result<Option<i64>> {
+    Ok(read_migrations(&mut *pool.acquire().await?)
+        .await?
+        .into_iter()
+        .map(|migration| migration.version)
+        .max())
 }
 
 async fn read_migrations(

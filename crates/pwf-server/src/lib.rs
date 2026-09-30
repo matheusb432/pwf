@@ -1,5 +1,6 @@
 //! Local IPC gRPC process root for PWF.
 
+pub mod data;
 pub mod doctor;
 mod observability;
 mod project_snapshots;

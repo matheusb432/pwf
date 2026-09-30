@@ -42,6 +42,9 @@ async fn dispatch(
         command::RootCommand::Server(arguments) => crate::server::run(arguments, console)
             .await
             .map_err(Into::into),
+        command::RootCommand::Data(arguments) => {
+            crate::data::run(arguments).await.map_err(Into::into)
+        }
         command::RootCommand::Project(arguments) if arguments.command.is_none() => {
             Ok(command::project_help())
         }

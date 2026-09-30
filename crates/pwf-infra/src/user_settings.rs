@@ -296,10 +296,14 @@ impl TomlSettingsStore {
 
     #[must_use]
     pub fn from_environment() -> Self {
-        let path = directories::BaseDirs::new()
-            .map(|directories| directories.config_dir().join("pwf").join("config.toml"));
-        Self::new(path)
+        Self::new(config_path())
     }
+}
+
+#[must_use]
+pub fn config_path() -> Option<PathBuf> {
+    directories::BaseDirs::new()
+        .map(|directories| directories.config_dir().join("pwf").join("config.toml"))
 }
 
 impl TomlSettingsStore {

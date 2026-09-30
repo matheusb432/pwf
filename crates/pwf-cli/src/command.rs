@@ -4,13 +4,14 @@ use std::fmt;
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, error::ErrorKind};
 
-use crate::{note, project, task};
+use crate::{data, note, project, task};
 
 pub const PWF_COMMAND: CommandName = CommandName {
     name: "pwf",
     parent: None,
 };
 pub const DOCTOR_COMMAND: CommandName = PWF_COMMAND.subcommand("doctor");
+pub(crate) const DATA_COMMAND: CommandName = PWF_COMMAND.subcommand("data");
 pub(crate) const SERVER_COMMAND: CommandName = PWF_COMMAND.subcommand("server");
 pub(crate) const SERVER_INSTALL_COMMAND: CommandName = SERVER_COMMAND.subcommand("install");
 pub(crate) const SERVER_START_COMMAND: CommandName = SERVER_COMMAND.subcommand("start");
@@ -62,6 +63,7 @@ pub struct Cli {
 pub enum RootCommand {
     Doctor(crate::doctor::Arguments),
     Server(crate::server::Arguments),
+    Data(data::Arguments),
     Project(project::Arguments),
     Task(task::Command),
     Note(note::Arguments),
@@ -89,6 +91,8 @@ enum ParsedRootCommand {
     /// Manage the local background server and login startup.
     #[command(name = SERVER_COMMAND.name())]
     Server(crate::server::Arguments),
+    #[command(name = DATA_COMMAND.name(), about = "Exports or imports pwf's portable data for cross-machine handoff.")]
+    Data(data::Arguments),
     /// Manages registered projects.
     Project(project::Arguments),
     #[command(flatten)]
@@ -130,6 +134,7 @@ fn parse_normalized_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
     let command = match parsed.command {
         ParsedRootCommand::Doctor(arguments) => RootCommand::Doctor(arguments),
         ParsedRootCommand::Server(arguments) => RootCommand::Server(arguments),
+        ParsedRootCommand::Data(arguments) => RootCommand::Data(arguments),
         ParsedRootCommand::Project(arguments) => RootCommand::Project(arguments),
         ParsedRootCommand::Task(command) => RootCommand::Task(command),
         ParsedRootCommand::Note(arguments) => return parse_note_arguments(arguments, context),

@@ -1,7 +1,5 @@
-#[cfg(unix)]
-use std::path::PathBuf;
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     process::{Output, Stdio},
     time::Duration,
 };
@@ -261,6 +259,39 @@ async fn checked(command: &mut process::Command) -> anyhow::Result<String> {
         String::from_utf8_lossy(&response.stderr).trim()
     );
     Ok(String::from_utf8(response.stdout)?)
+}
+
+pub(crate) async fn run_server_subcommand<I, S>(arguments: I) -> anyhow::Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let cli = std::env::current_exe()?.canonicalize()?;
+    let server = cli.with_file_name(format!("pwf-server{}", std::env::consts::EXE_SUFFIX));
+    ensure!(
+        server.is_file(),
+        "missing sibling {} - install pwf-app with both binaries first",
+        server.display()
+    );
+    checked(process::Command::new(&server).args(arguments)).await
+}
+
+pub(crate) async fn is_registered_server_active() -> anyhow::Result<bool> {
+    let registration = native::Registration::discover().await?;
+    Ok(match registration.status().await? {
+        State::Running => true,
+        #[cfg(target_os = "linux")]
+        State::Starting => true,
+        State::NotInstalled | State::Stopped | State::Failed => false,
+    })
+}
+
+pub(crate) async fn stop_registered_server() -> anyhow::Result<()> {
+    native::Registration::discover().await?.stop().await
+}
+
+pub(crate) async fn start_registered_server() -> anyhow::Result<()> {
+    native::Registration::discover().await?.start().await
 }
 
 #[cfg(unix)]
