@@ -443,6 +443,6 @@ mod tests {
     fn expectation_only_write_set_is_valid() {
         let writes = TaskWriteSet::try_new(vec![expected("FOO-0001")], Vec::new()).unwrap();
 
-        assert!(writes.writes().is_empty());
+        assert_eq!(writes.writes(), &[] as &[TaskWrite]);
     }
 }

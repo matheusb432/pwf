@@ -44,7 +44,7 @@ fn doctor_formats_reports_and_keeps_json_unstyled() {
             }
             let output = command.output().unwrap();
             assert_eq!(output.status.code(), Some(i32::from(!server)));
-            assert!(output.stderr.is_empty());
+            assert_eq!(output.stderr, b"");
             let text = String::from_utf8(output.stdout).unwrap();
             if json {
                 let _: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -76,7 +76,7 @@ fn doctor_reports_absent_service_as_json_without_creating_state() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let checks = report["checks"].as_array().unwrap();
     assert!(
@@ -132,7 +132,7 @@ fn incompatible_history_is_reported_offline_and_startup_returns_permanent_failur
         .output()
         .unwrap();
     assert_eq!(report.status.code(), Some(1));
-    assert!(report.stderr.is_empty());
+    assert_eq!(report.stderr, b"");
     let json: serde_json::Value = serde_json::from_slice(&report.stdout).unwrap();
     assert!(
         json["checks"]
@@ -187,7 +187,7 @@ fn doctor_succeeds_for_a_healthy_registered_server() {
         .output()
         .unwrap();
     support::assert_success(&output, "doctor healthy server");
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(
         report["checks"]
@@ -345,7 +345,7 @@ fn doctor_reports_restart_loop_and_checks_the_registered_database() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let checks = report["checks"].as_array().unwrap();
     assert!(
@@ -394,7 +394,7 @@ exit 1
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(1));
-        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout, b"");
         let error = String::from_utf8(output.stderr).unwrap();
         assert!(error.contains(expected_error), "{error}");
         if status == "fail" {

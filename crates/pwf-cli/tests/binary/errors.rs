@@ -12,7 +12,7 @@ fn unknown_root_commands_use_clap_diagnostics_without_connecting() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(
         error.starts_with("error: unrecognized subcommand 'sample-project'\n"),
@@ -35,7 +35,7 @@ fn runtime_errors_use_clap_with_the_selected_command_context() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
     let error = String::from_utf8(output.stderr).unwrap();
     assert!(
         error.starts_with("error: Cannot connect to pwf-server."),
@@ -97,7 +97,7 @@ fn unknown_project_ids_suggest_only_a_unique_eligible_id() {
     ] {
         let output = fixture.database.command_args(&args).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout, b"");
         let error = String::from_utf8(output.stderr).unwrap();
         assert!(error.starts_with("error: invalid value 'bac'"), "{error}");
         assert!(
@@ -108,14 +108,12 @@ fn unknown_project_ids_suggest_only_a_unique_eligible_id() {
         assert!(!error.contains("possible values"), "{error}");
         assert!(!error.contains('\x1b'));
     }
-    assert!(
+    assert_eq!(
         fixture
             .database
             .command_args(&["abc", "--long=json"])
-            .success_json()
-            .as_array()
-            .unwrap()
-            .is_empty()
+            .success_json(),
+        serde_json::json!([])
     );
     let other = tempfile::tempdir().unwrap();
     let tasks = other.path().join("tasks");
@@ -165,7 +163,7 @@ fn explicit_project_arguments_reject_titles_before_connecting() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout, b"");
         let error = String::from_utf8(output.stderr).unwrap();
         assert!(
             error.starts_with("error: invalid value 'sample-project'"),

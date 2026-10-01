@@ -193,14 +193,9 @@ mod tests {
         .unwrap();
         assert!(enriched.details.as_ref().unwrap().launch.is_ready());
         assert!(!enriched.details.as_ref().unwrap().launch.needs_body());
-        assert!(
-            enriched
-                .details
-                .as_ref()
-                .unwrap()
-                .launch
-                .issues()
-                .is_empty()
+        assert_eq!(
+            enriched.details.as_ref().unwrap().launch.issues(),
+            &[] as &[TaskIssue]
         );
         assert_eq!(
             enriched.details.as_ref().unwrap().body.as_ref(),

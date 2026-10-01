@@ -39,7 +39,7 @@ fn combines_tasks_and_notes_with_project_and_status_filters() -> anyhow::Result<
     let cancelled = fixture.add_task(&alpha, "cancelled alpha")?;
     fixture.pwf(&["task", "done", &done])?;
     fixture.pwf(&["task", "backlog", &backlog])?;
-    fixture.pwf(&["task", "cancel", &cancelled, "--report", "no longer needed"])?;
+    fixture.pwf(&["task", "cancel", &cancelled, "-r", "no longer needed"])?;
     fixture.add_task(&beta, "beta task")?;
     fixture.add_task(&paused, "paused task")?;
     for id in ["ALP", "BET", "PAU"] {

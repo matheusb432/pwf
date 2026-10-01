@@ -13,7 +13,7 @@ fn successful_stdout(fixture: &ManagedProject, arguments: &[&str]) -> anyhow::Re
         "command failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
     Ok(String::from_utf8(output.stdout)?)
 }
 

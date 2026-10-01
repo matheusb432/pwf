@@ -157,8 +157,8 @@ mod tests {
     #[test]
     fn marker_first_body_sets_only_the_selected_section() {
         let parsed = parse("/c currently, x does y", &configuration());
-        assert!(parsed.title().is_empty());
-        assert!(parsed.section_items()[0].is_empty());
+        assert_eq!(parsed.title(), "");
+        assert_eq!(parsed.section_items()[0], Vec::<String>::new());
         assert_eq!(parsed.section_items()[1], ["currently, x does y"]);
     }
 

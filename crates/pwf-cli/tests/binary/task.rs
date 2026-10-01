@@ -24,7 +24,7 @@ fn from_file_add_uses_file_stem_as_title_and_preserves_content() {
         .output()
         .unwrap();
     assert!(!missing.status.success());
-    assert!(missing.stdout.is_empty());
+    assert_eq!(missing.stdout, b"");
     let stderr = String::from_utf8(missing.stderr).unwrap();
     assert!(stderr.contains("cannot read task source file"), "{stderr}");
 
@@ -185,7 +185,7 @@ fn shorthand_add_renders_the_project_preset_and_sections_describes_it() {
         .output()
         .unwrap();
     assert!(!missing.status.success());
-    assert!(missing.stdout.is_empty());
+    assert_eq!(missing.stdout, b"");
     assert!(
         String::from_utf8(missing.stderr).unwrap().contains("MISS"),
         "missing project"
@@ -317,7 +317,7 @@ fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
     let output = fixture.database.command().arg("foo").output().unwrap();
 
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains(&*config_path.to_string_lossy()), "{stderr}");
     assert!(
@@ -386,9 +386,7 @@ fn removed_section_workflow_flags_are_rejected_by_the_parser() {
     for arguments in [
         vec!["task", "add", "foo", "ship it", "--human"],
         vec!["task", "done", "FOO-0001", "--review"],
-        vec![
-            "task", "cancel", "FOO-0001", "--report", "obsolete", "--review",
-        ],
+        vec!["task", "cancel", "FOO-0001", "-r", "obsolete", "--review"],
     ] {
         let output = command().args(&arguments).output().unwrap();
 
@@ -412,7 +410,7 @@ fn task_list_rejects_section_before_connecting() {
     ] {
         let output = command().args(&arguments).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{arguments:?}");
-        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout, b"");
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(
             stderr.contains("unexpected argument '--section'"),
@@ -520,7 +518,7 @@ fn task_dag_render_fixture() -> ManagedProject {
             "task",
             "cancel",
             "FOO-0002",
-            "--report",
+            "-r",
             "renderer no longer applies",
         ])
         .assert()
@@ -719,7 +717,7 @@ fn configured_list_page_size_applies_to_every_list_spelling() -> anyhow::Result<
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            assert!(output.stderr.is_empty());
+            assert_eq!(output.stderr, b"");
             assert_list_ids(&String::from_utf8(output.stdout)?, &expected);
         }
     }
@@ -772,7 +770,7 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
     ] {
         let output = fixture.database.command().args(&prefix).output()?;
         assert!(output.status.success());
-        assert!(output.stderr.is_empty());
+        assert_eq!(output.stderr, b"");
         assert_list_ids(
             &String::from_utf8(output.stdout)?,
             &["FOO-0003", "FOO-0002", "FOO-0001"],
@@ -868,7 +866,7 @@ fn task_mutations_print_one_summary_line() {
             "Already active task: FOO-0001 :: edited title\n",
         ),
         (
-            vec!["task", "cancel", "FOO-0001", "--report", "no longer needed"],
+            vec!["task", "cancel", "FOO-0001", "-r", "no longer needed"],
             "Cancelled task: FOO-0001 :: edited title\n",
         ),
         (
@@ -935,7 +933,7 @@ fn task_mutations_use_configured_lifecycle_colors() {
             color_rgb(1, 2, 3),
         ),
         (
-            vec!["task", "cancel", "FOO-0001", "--report", "no longer needed"],
+            vec!["task", "cancel", "FOO-0001", "-r", "no longer needed"],
             "Cancelled",
             color_rgb(7, 8, 9),
         ),
@@ -1000,7 +998,7 @@ fn project_ids_ignore_title_collisions_and_exclude_paused_projects() {
         .output()
         .unwrap();
     assert_eq!(error.status.code(), Some(2));
-    assert!(error.stdout.is_empty());
+    assert_eq!(error.stdout, b"");
     let diagnostic = String::from_utf8(error.stderr).unwrap();
     assert!(
         diagnostic.starts_with("error: invalid value 'foo'"),
@@ -1058,7 +1056,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
         .output()
         .unwrap();
     assert!(!rejected.status.success());
-    assert!(rejected.stdout.is_empty());
+    assert_eq!(rejected.stdout, b"");
     assert!(
         String::from_utf8(rejected.stderr)
             .unwrap()
@@ -1078,7 +1076,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
             .output()
             .unwrap();
         assert!(!missing.status.success(), "{arguments:?}");
-        assert!(missing.stdout.is_empty());
+        assert_eq!(missing.stdout, b"");
         let stderr = String::from_utf8(missing.stderr).unwrap();
         assert!(
             stderr.contains("Task not found: FOO-0001"),
@@ -1206,12 +1204,12 @@ fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_snapshots() -> an
         let listed = run(&["task", "list", "--all", "--order", "id:asc"])?;
         assert_list_ids(&listed, &["FOO-0001", "FOO-0002"]);
         assert!(!listed.contains("Someday"), "{listed}");
-        run(&["task", "done", "FOO-0001", "--report", "finished"])?;
+        run(&["task", "done", "FOO-0001", "-r", "finished"])?;
         let task: serde_json::Value =
             serde_json::from_str(&run(&["task", "get", "FOO-0001", "--long=json"])?)?;
         assert_eq!(task["status"], "done");
         run(&["task", "activate", "FOO-0001", "--yes"])?;
-        run(&["task", "cancel", "FOO-0001", "--report", "obsolete"])?;
+        run(&["task", "cancel", "FOO-0001", "-r", "obsolete"])?;
         let task: serde_json::Value =
             serde_json::from_str(&run(&["task", "get", "FOO-0001", "--long=json"])?)?;
         assert_eq!(task["status"], "cancelled");
@@ -1219,7 +1217,7 @@ fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_snapshots() -> an
         assert!(!tasks.join("FOO-0001.md").exists());
         let missing = fixture.run(&["task", "get", "FOO-0001"])?;
         assert!(!missing.status.success());
-        assert!(missing.stdout.is_empty());
+        assert_eq!(missing.stdout, b"");
         assert!(String::from_utf8(missing.stderr)?.contains("FOO-0001"));
         let listed = run(&["task", "list", "--all"])?;
         assert!(!listed.contains("FOO-0001"), "{listed}");
@@ -1315,7 +1313,7 @@ fn task_list_all_widens_status_and_cap_without_grouping_snapshot_sections() -> a
             "{arguments:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(output.stderr.is_empty());
+        assert_eq!(output.stderr, b"");
         let output = String::from_utf8(output.stdout)?;
         assert_list_ids(&output, expected);
         assert!(!output.contains("Alpha"), "{output}");
@@ -1468,7 +1466,7 @@ fn closed_task_activation_requires_confirmation_before_removing_data() {
     fixture
         .database
         .command()
-        .args(["task", "done", "FOO-0001", "--report", "verified"])
+        .args(["task", "done", "FOO-0001", "-r", "verified"])
         .assert()
         .success();
     let id = task_id("FOO-0001").unwrap();
@@ -1480,7 +1478,7 @@ fn closed_task_activation_requires_confirmation_before_removing_data() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
     assert!(String::from_utf8(output.stderr).unwrap().contains("--yes"));
     assert_eq!(task_json(&fixture.database, &id).unwrap(), closed);
 }
@@ -1564,7 +1562,7 @@ fn task_content_format_parser_rejects_removed_and_conflicting_flags() {
     ] {
         let output = command().args(&arguments).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{arguments:?}");
-        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout, b"");
     }
 }
 
@@ -1717,7 +1715,7 @@ fn task_content_lists_keep_machine_formats_clean_and_preserve_file_bytes() {
         .output()
         .unwrap();
     assert!(!rejected.status.success());
-    assert!(rejected.stdout.is_empty());
+    assert_eq!(rejected.stdout, b"");
     let stderr = String::from_utf8(rejected.stderr).unwrap();
     assert!(
         stderr.contains("config.toml") && stderr.contains("datetime_format"),

@@ -937,8 +937,8 @@ mod tests {
         let file = MarkdownFile::open(tasks_path.join("FOO-NOTE-0001.md")).unwrap();
         let metadata = file.frontmatter::<NoteFrontmatter>().unwrap().unwrap();
         assert_eq!(metadata.domain, None);
-        assert!(metadata.tags.is_empty());
-        assert!(metadata.sources.is_empty());
+        assert_eq!(metadata.tags, Vec::<String>::new());
+        assert_eq!(metadata.sources, Vec::<String>::new());
         assert_eq!(metadata.verified, None);
         assert_eq!(
             file.body(),
@@ -1077,10 +1077,9 @@ mod tests {
                 "Edited"
             );
             ProjectNotes::delete_note(&store, &project, &note.id).unwrap();
-            assert!(
-                ProjectNotes::list_notes(&store, &project)
-                    .unwrap()
-                    .is_empty()
+            assert_eq!(
+                ProjectNotes::list_notes(&store, &project).unwrap(),
+                Vec::<pwf_models::note::ProjectNote>::new()
             );
             assert!(
                 ProjectNotes::get_note(&store, &project, &note.id)
@@ -1155,10 +1154,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("missing");
         let store = store(&tasks_path);
-        assert!(
-            ProjectNotes::list_notes(&store, &project(&tasks_path))
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            ProjectNotes::list_notes(&store, &project(&tasks_path)).unwrap(),
+            Vec::<pwf_models::note::ProjectNote>::new()
         );
         assert!(!tasks_path.exists());
     }

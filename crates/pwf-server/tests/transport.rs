@@ -107,7 +107,7 @@ async fn release_metadata_rejects_unmatched_mutations_before_execution() -> anyh
             limit: 0,
         })
         .await?;
-    assert!(notes.notes.is_empty());
+    assert_eq!(notes.notes, Vec::<pb::ListedNote>::new());
     let healthy = HealthClient::new(server.channel().await?)
         .check(HealthCheckRequest {
             service: String::new(),
@@ -1008,7 +1008,7 @@ async fn v1_repeated_confirmed_requests_observe_current_task_state() -> anyhow::
         pwf_client::confirmation::ConfirmedRequestError::Operation(status)
             if status.code() == Code::NotFound
     ));
-    assert!(prompt.seen().is_empty());
+    assert_eq!(prompt.seen(), Vec::<&str>::new());
     assert!(!server.task_path(&deleted_id).exists());
     let error = server
         .client
@@ -1047,7 +1047,7 @@ async fn v1_repeated_confirmed_requests_observe_current_task_state() -> anyhow::
         active.outcome,
         Some(activate_task_result::Outcome::AlreadyActive(_))
     ));
-    assert!(prompt.seen().is_empty());
+    assert_eq!(prompt.seen(), Vec::<&str>::new());
 
     server.client.task().complete_task(complete).await?;
     let prompt = RecordingPrompt::new(false);
@@ -1814,7 +1814,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
             limit: 0,
         })
         .await?;
-    assert!(listed.notes.is_empty());
+    assert_eq!(listed.notes, Vec::<pb::ListedNote>::new());
 
     server.finish().await
 }
@@ -1902,7 +1902,7 @@ async fn generated_client_backlogs_tasks_and_activates_without_a_prompt() -> any
         result.outcome,
         Some(activate_task_result::Outcome::Activated(_))
     ));
-    assert!(prompt.seen().is_empty());
+    assert_eq!(prompt.seen(), Vec::<&str>::new());
     assert_eq!(
         task_record(&server, &id).await?.status,
         pb::TaskStatus::Active as i32
@@ -2436,7 +2436,7 @@ async fn project_operations_require_ids_and_report_missing_projects() -> anyhow:
             }
             pwf_client::confirmation::ConfirmedRequestError::Prompt(error) => match error {},
         }
-        assert!(prompt.seen().is_empty());
+        assert_eq!(prompt.seen(), Vec::<&str>::new());
     }
     assert_eq!(server.add_task("next task").await?, "FOO-0002");
     server.finish().await
@@ -2882,7 +2882,10 @@ async fn exercise_project_note_crud(
         Some(delete_note_result::Outcome::Deleted(_))
     ));
     assert!(!file_path.exists());
-    assert!(client.list_notes(list_request).await?.notes.is_empty());
+    assert_eq!(
+        client.list_notes(list_request).await?.notes,
+        Vec::<pb::ListedNote>::new()
+    );
     Ok(())
 }
 

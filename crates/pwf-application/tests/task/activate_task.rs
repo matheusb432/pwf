@@ -236,7 +236,7 @@ async fn activate_already_active_is_idempotent_skip(pool: sqlx::SqlitePool) {
     .unwrap();
 
     assert_eq!(out.outcome, ActivateTaskOutcome::AlreadyActive);
-    assert!(confirmation.recorded().is_empty());
+    assert_eq!(confirmation.recorded(), []);
     assert_eq!(store.tasks("foo-bar")[0].commits.as_deref(), Some("a..b"));
 }
 
@@ -324,7 +324,7 @@ async fn activate_backlog_preserves_content_without_confirmation(pool: sqlx::Sql
     .unwrap();
 
     assert_eq!(result.outcome, ActivateTaskOutcome::Activated);
-    assert!(confirmation.recorded().is_empty());
+    assert_eq!(confirmation.recorded(), []);
     let tasks = store.tasks("foo-bar");
     assert_eq!(tasks[0].status, TaskStatus::Active);
     assert_eq!(tasks[0].body, backlogged.body);

@@ -434,7 +434,7 @@ mod tests {
             ],
         );
 
-        assert!(violations(workspace.path()).is_empty());
+        assert_eq!(violations(workspace.path()), Vec::<String>::new());
     }
 
     fn violations(root: &Path) -> Vec<String> {

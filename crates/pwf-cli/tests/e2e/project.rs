@@ -39,7 +39,7 @@ fn project_registry_lifecycle_is_observable_across_processes() {
         String::from_utf8(edited.stdout).unwrap(),
         "Edited project: FOO :: foo-bar\n"
     );
-    assert!(edited.stderr.is_empty());
+    assert_eq!(edited.stderr, b"");
     let foo = success_json(fixture.run(&["project", "get", "foo"]).unwrap()).unwrap();
     assert_project(
         &foo,

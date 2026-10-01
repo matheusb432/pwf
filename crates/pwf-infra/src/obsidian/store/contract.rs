@@ -123,7 +123,7 @@ fn list_returns_empty_when_project_directory_is_missing() {
             .collect::<Vec<_>>()
     );
 
-    assert!(records.is_empty());
+    assert_eq!(records, Vec::<pwf_wire::task::TaskRecord>::new());
     assert!(!tasks_path.exists());
 }
 
@@ -883,7 +883,10 @@ fn repeated_deletion_preserves_each_note_in_numbered_trash_files() {
         );
         saved.push((notes_dir.join(".trash").join(name), contents));
         assert!(!task_path.exists());
-        assert!(TaskVault::list_tasks(&store, &project).unwrap().is_empty());
+        assert_eq!(
+            TaskVault::list_tasks(&store, &project).unwrap(),
+            Vec::<pwf_wire::task::TaskRecord>::new()
+        );
         assert!(
             !std::fs::read_to_string(project_dir.join("foo.md"))
                 .unwrap()
@@ -1629,7 +1632,10 @@ fn unregistered_project_hard_deletes_even_under_an_obsidian_vault() {
         }],
     );
     assert!(!record.locator.as_path().exists());
-    assert!(TaskVault::list_tasks(&store, &project).unwrap().is_empty());
+    assert_eq!(
+        TaskVault::list_tasks(&store, &project).unwrap(),
+        Vec::<pwf_wire::task::TaskRecord>::new()
+    );
     assert_eq!(
         std::fs::read_dir(root.path().join(".trash"))
             .unwrap()
@@ -1855,7 +1861,7 @@ fn task_crud_ignores_generated_snapshot_contents() {
             id: record.id.clone(),
             deletion: pwf_wire::confirmation::TaskDeletion::HardDelete,
         }]);
-        assert!(TaskVault::list_tasks(&store, &project).unwrap().is_empty());
+        assert_eq!(TaskVault::list_tasks(&store, &project).unwrap(), Vec::<pwf_wire::task::TaskRecord>::new());
         assert!(get_record(&store, "FOO-0001").is_none());
         assert_eq!(std::fs::read(snapshot).unwrap(), page);
     }

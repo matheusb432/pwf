@@ -24,13 +24,13 @@ async fn referenced_projects_include_paused_and_skip_missing_ids(pool: sqlx::Sql
         ["AUX", "FOO"]
     );
     assert!(projects[0].is_paused);
-    assert!(
+    assert_eq!(
         get_projects::execute(
             &std::collections::BTreeSet::new(),
             &pwf_infra::project_store::SqliteProjectStore::new(pool.clone())
         )
         .await
-        .unwrap()
-        .is_empty()
+        .unwrap(),
+        Vec::<pwf_models::project::Project>::new()
     );
 }

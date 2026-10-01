@@ -10,7 +10,7 @@ pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
     /// Append a one-line completion report.
-    #[arg(long)]
+    #[arg(short = 'r', long)]
     pub(crate) report: Option<String>,
     /// Commit range(s) to record as provenance (repeat or comma-separate).
     #[arg(long)]

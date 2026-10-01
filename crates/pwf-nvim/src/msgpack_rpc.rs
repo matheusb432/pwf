@@ -254,7 +254,7 @@ mod tests {
         let (result, notifications, output) = serve_input(request.as_slice()).await;
 
         result.unwrap();
-        assert!(notifications.is_empty());
+        assert_eq!(notifications, Vec::<Notification>::new());
         let response = rmpv::decode::read_value(&mut output.as_slice()).unwrap();
         let fields = response.as_array().unwrap();
         assert_eq!(fields[..2], [Value::from(RESPONSE), Value::from(7)]);

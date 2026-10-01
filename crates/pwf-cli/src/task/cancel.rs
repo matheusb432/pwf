@@ -13,7 +13,7 @@ pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
     /// Required cancellation report: what was tried and why work stopped.
-    #[arg(long)]
+    #[arg(short = 'r', long)]
     pub(crate) report: Option<String>,
     /// Commit range(s) to record as provenance (repeat or comma-separate).
     #[arg(long)]
@@ -30,7 +30,7 @@ pub(super) async fn run(
     let report = arguments
         .report
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--report is required for cancel."))?
+        .ok_or_else(|| anyhow::anyhow!("-r is required for cancel."))?
         .parse::<TaskReport>()
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let command = CancelTaskRequest {

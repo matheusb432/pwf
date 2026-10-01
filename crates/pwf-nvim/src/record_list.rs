@@ -364,7 +364,7 @@ mod tests {
             let (metadata, line, prefix) = read_frontmatter(&mut reader).unwrap();
             assert_eq!(metadata.id.as_deref(), Some("PWF-0007"));
             assert_eq!(line, 5);
-            assert!(prefix.is_empty());
+            assert_eq!(prefix, "");
             let mut body = String::new();
             reader.read_to_string(&mut body).unwrap();
             assert_eq!(body, "body");

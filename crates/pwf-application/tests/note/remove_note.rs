@@ -89,7 +89,10 @@ async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
                 title: NoteTitle::try_new("remember milk").unwrap(),
             }]
         );
-        assert!(store.project_notes("foo").is_empty());
+        assert_eq!(
+            store.project_notes("foo"),
+            Vec::<pwf_models::note::ProjectNote>::new()
+        );
     }
 }
 

@@ -755,7 +755,7 @@ mod tests {
         let mut app = app();
         app.handle_key(key(KeyCode::Char('/')));
         app.paste("saved markdown");
-        assert!(app.browser.visible.is_empty());
+        assert_eq!(app.browser.visible, Vec::<usize>::new());
         app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL));
         assert_eq!(app.browser.visible.len(), 2);
         app.handle_key(key(KeyCode::Enter));

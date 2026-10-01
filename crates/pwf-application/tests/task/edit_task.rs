@@ -488,5 +488,8 @@ async fn edit_rejects_a_missing_task_file(pool: sqlx::SqlitePool) {
         error,
         EditTaskError::TaskNotFound { ref id } if id.as_ref() == "FOO-0001"
     ));
-    assert!(store.tasks("foo-bar").is_empty());
+    assert_eq!(
+        store.tasks("foo-bar"),
+        Vec::<pwf_wire::task::TaskRecord>::new()
+    );
 }

@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(browser.current().unwrap().title, "Keyboard notes");
         browser.query = TextArea::from(["saved MARKDOWN"]);
         browser.refilter();
-        assert!(browser.visible.is_empty());
+        assert_eq!(browser.visible, Vec::<usize>::new());
     }
 
     #[test]

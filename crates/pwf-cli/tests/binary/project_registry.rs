@@ -226,7 +226,7 @@ fn application_project_errors_are_emitted_without_command_prefixes() {
         let output = fixture.run(&["project", operation, "xyz"]).unwrap();
 
         assert!(!output.status.success());
-        assert!(output.stdout.is_empty());
+        assert_eq!(output.stdout, b"");
         let diagnostic = String::from_utf8(output.stderr).unwrap();
         assert!(
             diagnostic.starts_with("error: project not found: XYZ\n"),

@@ -243,7 +243,7 @@ async fn add_uses_project_id_even_when_another_project_has_that_title(pool: sqlx
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(store.tasks("original").len(), 1);
-    assert!(store.tasks("foo").is_empty());
+    assert_eq!(store.tasks("foo"), Vec::<pwf_wire::task::TaskRecord>::new());
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -408,7 +408,7 @@ async fn invalid_task_body_settings_reject_creation(pool: sqlx::SqlitePool) {
         error,
         AddTaskError::TaskBodyPresets(UserSettingsLoadError::InvalidConfiguration(_))
     ));
-    assert!(store.tasks("foo").is_empty());
+    assert_eq!(store.tasks("foo"), Vec::<pwf_wire::task::TaskRecord>::new());
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -430,7 +430,7 @@ async fn shorthand_still_requires_a_title(pool: sqlx::SqlitePool) {
             error,
             AddTaskError::InvalidTitle(TaskBodyTitleError::Missing)
         ));
-        assert!(store.tasks("foo").is_empty());
+        assert_eq!(store.tasks("foo"), Vec::<pwf_wire::task::TaskRecord>::new());
     }
 }
 

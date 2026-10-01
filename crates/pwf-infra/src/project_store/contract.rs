@@ -81,12 +81,12 @@ async fn reads_share_project_values_and_batch_only_missing_ids(pool: sqlx::Sqlit
 #[sqlx::test]
 async fn all_mutations_invalidate_lists_and_individual_reads(pool: sqlx::SqlitePool) {
     let store = SqliteProjectStore::new(pool);
-    assert!(
+    assert_eq!(
         store
             .list_projects(ProjectStatusFilter::IncludingPaused)
             .await
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+        Vec::<pwf_models::project::Project>::new()
     );
     store.add_project(fields("FOO"), &home()).await.unwrap();
     assert_eq!(
@@ -113,12 +113,12 @@ async fn all_mutations_invalidate_lists_and_individual_reads(pool: sqlx::SqliteP
             .await
             .is_err()
     );
-    assert!(
+    assert_eq!(
         store
             .list_projects(ProjectStatusFilter::ActiveOnly)
             .await
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+        Vec::<pwf_models::project::Project>::new()
     );
     assert_eq!(
         store

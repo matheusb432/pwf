@@ -62,7 +62,6 @@ impl SessionTaskIds {
     }
 
     /// Returns task IDs in their supplied order.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &TaskId> {
         self.0.iter()
     }

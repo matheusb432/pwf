@@ -95,7 +95,7 @@ fn exact_budget_includes_both_arc_headers_and_reserved_capacity() {
     assert_eq!(fresh.len(), 1);
     let state = index.state.lock().unwrap();
     assert!(state.entries.is_empty());
-    assert!(state.watches.is_empty());
+    assert_eq!(state.watches, Vec::<(std::path::PathBuf, usize)>::new());
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn own_invalidation_preserves_a_directory_watched_as_another_entries_parent() {
     index.invalidate(&parent);
     let state = index.state.lock().unwrap();
     assert!(state.entries.is_empty());
-    assert!(state.watches.is_empty());
+    assert_eq!(state.watches, Vec::<(std::path::PathBuf, usize)>::new());
     assert!(state.watcher.is_some());
 }
 
@@ -232,7 +232,7 @@ fn unavailable_watcher_always_scans_fresh() {
     assert_eq!(scans.get(), 2);
     let state = index.state.lock().unwrap();
     assert!(state.entries.is_empty());
-    assert!(state.watches.is_empty());
+    assert_eq!(state.watches, Vec::<(std::path::PathBuf, usize)>::new());
 }
 
 #[test]
@@ -250,7 +250,10 @@ fn scan_errors_release_watches_and_are_retried() {
         if source.kind() == io::ErrorKind::PermissionDenied)
     );
     assert!(index.state.lock().unwrap().entries.is_empty());
-    assert!(index.state.lock().unwrap().watches.is_empty());
+    assert_eq!(
+        index.state.lock().unwrap().watches,
+        Vec::<(std::path::PathBuf, usize)>::new()
+    );
 
     index
         .read(&directory, || Ok(summaries(&directory, 0)))
@@ -278,7 +281,7 @@ fn watcher_errors_bypass_debounce_and_drop_retained_state() {
     assert!(!Arc::ptr_eq(&before, &after));
     let state = index.state.lock().unwrap();
     assert!(state.entries.is_empty());
-    assert!(state.watches.is_empty());
+    assert_eq!(state.watches, Vec::<(std::path::PathBuf, usize)>::new());
     assert!(state.watcher.is_none());
 }
 
@@ -348,7 +351,7 @@ fn summary_optional_string_capacity_and_compact_tags_count_toward_budget() {
         .unwrap();
     let state = index.state.lock().unwrap();
     assert!(state.entries.is_empty());
-    assert!(state.watches.is_empty());
+    assert_eq!(state.watches, Vec::<(std::path::PathBuf, usize)>::new());
 }
 
 #[test]
@@ -398,7 +401,7 @@ fn graph_dependencies_and_diagnostics_count_toward_the_cache_budget() {
         assert_eq!(fresh.len(), 1);
         let state = index.state.lock().unwrap();
         assert!(state.entries.is_empty());
-        assert!(state.watches.is_empty());
+        assert_eq!(state.watches, Vec::<(std::path::PathBuf, usize)>::new());
     }
     let index = TaskIndex::new();
     let fresh = index
@@ -431,7 +434,10 @@ fn events_during_scan_prevent_retention_and_force_another_scan() {
         })
         .unwrap();
     assert!(index.state.lock().unwrap().entries.is_empty());
-    assert!(index.state.lock().unwrap().watches.is_empty());
+    assert_eq!(
+        index.state.lock().unwrap().watches,
+        Vec::<(std::path::PathBuf, usize)>::new()
+    );
     index.changes.lock().unwrap().pending_since =
         Some(Instant::now().checked_sub(DEBOUNCE).unwrap());
 
@@ -481,7 +487,7 @@ fn poisoned_cache_falls_back_to_fresh_metadata() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert!(state.entries.is_empty());
-    assert!(state.watches.is_empty());
+    assert_eq!(state.watches, Vec::<(std::path::PathBuf, usize)>::new());
     assert!(state.watcher.is_none());
 }
 

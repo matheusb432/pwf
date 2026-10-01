@@ -346,7 +346,7 @@ mod confirmed_removal {
         .await
         .unwrap();
         assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
-        assert!(store.tasks("foo").is_empty());
+        assert_eq!(store.tasks("foo"), Vec::<pwf_wire::task::TaskRecord>::new());
     }
 
     #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -394,7 +394,7 @@ async fn removal_returns_the_task_summary_and_reports_missing_on_repeat(pool: sq
             status: TaskStatus::Cancelled,
         })
     );
-    assert!(store.tasks("foo").is_empty());
+    assert_eq!(store.tasks("foo"), Vec::<pwf_wire::task::TaskRecord>::new());
 
     let error = remove_task::execute(
         &command,

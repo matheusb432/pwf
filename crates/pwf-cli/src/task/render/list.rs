@@ -306,7 +306,7 @@ mod tests {
             blocked_by_status_summary(&task.blocked_by_statuses),
             "AUX-0014 (done)"
         );
-        assert!(diagnostics(&task).is_empty());
+        assert_eq!(diagnostics(&task), "");
         task.blocked_by_statuses[0].status = Some(TaskStatus::Active as i32);
         assert!(diagnostics(&task).contains("READY WITH WARNINGS"));
         task.blocked_by_issues.push(pwf_client::pb::BlockedByIssue {
@@ -327,6 +327,6 @@ mod tests {
         assert!(output.contains("Body is a placeholder"));
         assert!(output.contains("Fix: edit FOO-0001.md"));
         task.status = TaskStatus::Done as i32;
-        assert!(diagnostics(&task).is_empty());
+        assert_eq!(diagnostics(&task), "");
     }
 }
