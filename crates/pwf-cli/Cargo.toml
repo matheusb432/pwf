@@ -33,6 +33,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 pwf-client = { workspace = true }
 pwf-models = { workspace = true }
+pwf-tui = { workspace = true }
 clap = { workspace = true }
 clap-cargo = { workspace = true }
 serde = { workspace = true }
@@ -55,6 +56,7 @@ tempfile = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 expectrl = { workspace = true }
+vt100 = "0.16.2"
 
 [target.'cfg(windows)'.dependencies]
 base64 = { workspace = true }

@@ -23,3 +23,5 @@ mod session_dispatch;
 mod support;
 #[path = "binary/task.rs"]
 mod task;
+#[path = "binary/tui.rs"]
+mod tui;

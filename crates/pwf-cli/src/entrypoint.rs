@@ -35,6 +35,13 @@ async fn dispatch(
     console: Console,
 ) -> Result<(String, bool), crate::error::Error> {
     let output = match command {
+        command::RootCommand::Tui(arguments) => {
+            if !console.fullscreen_terminal() {
+                return Err(anyhow::anyhow!("pwf tui needs an interactive terminal; use `pwf task list` or `pwf note list` for redirected output").into());
+            }
+            pwf_tui::run(arguments).await?;
+            return Ok((String::new(), true));
+        }
         command::RootCommand::Doctor(arguments) => {
             let report = crate::doctor::inspect().await;
             return Ok((arguments.render(&report, console)?, !report.failed()));

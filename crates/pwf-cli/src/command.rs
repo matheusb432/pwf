@@ -61,6 +61,7 @@ pub struct Cli {
 
 #[derive(Debug)]
 pub enum RootCommand {
+    Tui(pwf_tui::Arguments),
     Doctor(crate::doctor::Arguments),
     Server(crate::server::Arguments),
     Data(data::Arguments),
@@ -85,6 +86,8 @@ struct ParsedCli {
 
 #[derive(Subcommand, Debug)]
 enum ParsedRootCommand {
+    /// Browse, create, and manage tasks and notes in an interactive terminal.
+    Tui(pwf_tui::Arguments),
     /// Check local server health and show recovery actions without changing state.
     #[command(name = DOCTOR_COMMAND.name())]
     Doctor(crate::doctor::Arguments),
@@ -132,6 +135,7 @@ fn parse_normalized_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
     })?;
     let context = selected_command(&command, &matches).clone();
     let command = match parsed.command {
+        ParsedRootCommand::Tui(arguments) => RootCommand::Tui(arguments),
         ParsedRootCommand::Doctor(arguments) => RootCommand::Doctor(arguments),
         ParsedRootCommand::Server(arguments) => RootCommand::Server(arguments),
         ParsedRootCommand::Data(arguments) => RootCommand::Data(arguments),

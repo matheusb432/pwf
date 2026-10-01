@@ -12,7 +12,7 @@ struct EdgePolicy {
     reason: &'static str,
 }
 
-const EDGE_POLICIES: [EdgePolicy; 12] = [
+const EDGE_POLICIES: [EdgePolicy; 13] = [
     EdgePolicy {
         from: "pwf-models",
         label: "models stay independent",
@@ -28,6 +28,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-infra",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-migrator",
             "pwf-server",
             "pwf-marker-sections",
@@ -45,6 +46,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-infra",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
@@ -60,6 +62,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-infra",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
@@ -74,6 +77,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-client",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
@@ -90,6 +94,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-application",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-infra",
             "pwf-migrator",
             "pwf-models",
@@ -117,6 +122,24 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
         reason: "the CLI must not own task-body syntax, application policy, or persistence",
     },
     EdgePolicy {
+        from: "pwf-tui",
+        label: "terminal UI stays a frontend",
+        forbidden: &[
+            "directories",
+            "pwf-marker-sections",
+            "pwf-application",
+            "pwf-cli",
+            "pwf-infra",
+            "pwf-migrator",
+            "pwf-nvim",
+            "pwf-local-transport",
+            "pwf-server",
+            "pwf-wire",
+            "sqlx",
+        ],
+        reason: "the terminal UI must reach pwf through the client and own no application policy or persistence",
+    },
+    EdgePolicy {
         from: "pwf-nvim",
         label: "neovim child stays a frontend",
         forbidden: &[
@@ -126,6 +149,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-cli",
             "pwf-infra",
             "pwf-migrator",
+            "pwf-tui",
             "pwf-local-transport",
             "pwf-server",
             "pwf-wire",
@@ -141,6 +165,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-application",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-client",
             "pwf-infra",
             "pwf-migrator",
@@ -159,6 +184,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-client",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-local-transport",
             "xtask",
         ],
@@ -172,6 +198,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-cli",
             "pwf-client",
             "pwf-nvim",
+            "pwf-tui",
             "xtask",
         ],
         reason: "the server composes application and infrastructure without depending on frontends",
@@ -187,6 +214,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-infra",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-migrator",
             "pwf-server",
         ],
@@ -204,6 +232,7 @@ const EDGE_POLICIES: [EdgePolicy; 12] = [
             "pwf-infra",
             "pwf-cli",
             "pwf-nvim",
+            "pwf-tui",
             "pwf-migrator",
             "pwf-server",
             "pwf-marker-sections",
@@ -309,6 +338,11 @@ mod tests {
                     "pwf-infra",
                     "[dependencies]\npwf-migrator = { path = \"../pwf-migrator\" }\n",
                 ),
+                (
+                    "pwf-tui",
+                    "pwf-tui",
+                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
+                ),
                 ("pwf-migrator", "pwf-migrator", ""),
                 ("pwf-marker-sections", "pwf-marker-sections", ""),
                 ("serde", "serde", ""),
@@ -334,6 +368,7 @@ mod tests {
                  pwf-migrator: adapters must not depend on their runtime composition",
                 "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
+                "pwf-tui/Cargo.toml: [terminal UI stays a frontend] pwf-tui -> pwf-infra: the terminal UI must reach pwf through the client and own no application policy or persistence",
                 "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> pwf-infra: wire \
                  contracts must not depend on task-body syntax, use cases, adapters, or process roots",
                 "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> \
@@ -372,6 +407,11 @@ mod tests {
                 (
                     "pwf-cli",
                     "pwf-cli",
+                    "[dependencies]\npwf-client = { path = \"../pwf-client\" }\npwf-models = { path = \"../pwf-models\" }\npwf-tui = { path = \"../pwf-tui\" }\n",
+                ),
+                (
+                    "pwf-tui",
+                    "pwf-tui",
                     "[dependencies]\npwf-client = { path = \"../pwf-client\" }\npwf-models = { path = \"../pwf-models\" }\n",
                 ),
                 (

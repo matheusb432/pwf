@@ -7,9 +7,9 @@ use crate::{
 
 #[derive(Clone, Copy, Debug)]
 pub struct Console {
-    interactive: bool,
     color_forced: Option<bool>,
     stderr_terminal: bool,
+    stdin_terminal: bool,
     stdout_terminal: bool,
     stdout_columns: Option<usize>,
 }
@@ -28,11 +28,12 @@ impl Console {
             None
         };
         let stderr_terminal = std::io::stderr().is_terminal();
+        let stdin_terminal = std::io::stdin().is_terminal();
         let stdout_terminal = std::io::stdout().is_terminal();
         Self {
-            interactive: std::io::stdin().is_terminal() && stderr_terminal,
             color_forced,
             stderr_terminal,
+            stdin_terminal,
             stdout_terminal,
             stdout_columns: stdout_terminal
                 .then(|| usize::from(dialoguer::console::Term::stdout().size().1)),
@@ -43,9 +44,9 @@ impl Console {
     #[cfg(test)]
     fn plain() -> Self {
         Self {
-            interactive: false,
             color_forced: None,
             stderr_terminal: false,
+            stdin_terminal: false,
             stdout_terminal: false,
             stdout_columns: None,
         }
@@ -55,7 +56,7 @@ impl Console {
         if assume_yes {
             return Ok(ConfirmationMode::AssumeYes);
         }
-        if self.interactive {
+        if self.confirmation_terminal() {
             return Ok(ConfirmationMode::Prompt);
         }
         anyhow::bail!("interactive confirmation requires a terminal; rerun with --yes")
@@ -65,7 +66,7 @@ impl Console {
         self,
         dialog: &ConfirmationDialog,
     ) -> dialoguer::Result<ConfirmationAnswer> {
-        if !self.interactive {
+        if !self.confirmation_terminal() {
             return Err(std::io::Error::other(
                 "interactive confirmation requires a terminal; rerun with --yes",
             )
@@ -80,6 +81,14 @@ impl Console {
 
     pub(crate) const fn stdout_terminal(self) -> bool {
         self.stdout_terminal
+    }
+
+    pub(crate) const fn fullscreen_terminal(self) -> bool {
+        self.stdin_terminal && self.stdout_terminal
+    }
+
+    const fn confirmation_terminal(self) -> bool {
+        self.stdin_terminal && self.stderr_terminal
     }
 
     pub(crate) const fn stdout_columns(self) -> Option<usize> {
