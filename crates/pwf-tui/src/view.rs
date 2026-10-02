@@ -239,8 +239,7 @@ fn render_records(frame: &mut Frame, area: Rect, app: &App) {
 fn record_row(record: &Record, query: &str, mode: SearchMode, marked: bool) -> ListItem<'static> {
     let line = Line::from(vec![
         (if marked { "[x] " } else { "    " }).fg(if marked { COLOR_ACTIVE } else { COLOR_MUTED }),
-        format!("{} ", record.id.as_str()).fg(record_color(record)),
-        format!("[{}] ", record.status_label()).fg(COLOR_MUTED),
+        format!("{:<9} ", record.id.as_str()).fg(record_color(record)),
         Span::raw(clean(&record.title)),
     ]);
     if mode != SearchMode::Contents || query.is_empty() {

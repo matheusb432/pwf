@@ -295,7 +295,7 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(
             stdout.contains(&format!(
-                "{orange}FOO-0001{orange:#}",
+                "{orange}FOO-0001 {orange:#}",
                 orange = color_rgb(255, 135, 0)
             )),
             "{arguments:?}: {stdout:?}"
@@ -907,11 +907,11 @@ fn personal_separator_applies_to_task_output_and_reloads_without_changing_author
     for (args, expected) in [
         (
             vec!["task", "list", "--project", "foo"],
-            "FOO-0001 keep :: authored\n",
+            "FOO-0001  keep :: authored\n",
         ),
         (
             vec!["task", "list", "--project", "foo", "--all"],
-            "FOO-0001 [active] keep :: authored\n",
+            "FOO-0001  [active] keep :: authored\n",
         ),
         (
             vec!["task", "edit", "foo1", "--title", "keep :: authored"],
@@ -941,7 +941,7 @@ fn personal_separator_applies_to_task_output_and_reloads_without_changing_author
         .args(["task", "list", "--project", "foo"])
         .assert()
         .success()
-        .stdout("FOO-0001keep :: authored\n");
+        .stdout("FOO-0001 keep :: authored\n");
     assert_eq!(
         task_json(&fixture.database, &task_id("FOO-0001")?)?,
         stored_before

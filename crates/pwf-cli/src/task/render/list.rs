@@ -92,8 +92,9 @@ fn render_list_task(
     on: bool,
 ) {
     let status = TaskStatus::try_from(task.status).unwrap_or(TaskStatus::Unspecified);
+    let identifier = format!("{:<9}", task.id);
     out.push_str(&render_task_summary(
-        &task.id,
+        &identifier,
         &task.heading,
         status,
         status_filter == TaskStatusFilter::All && !on,
@@ -206,10 +207,13 @@ mod tests {
     #[test]
     fn all_status_short_lines_place_plain_lifecycle_after_the_identifier() {
         for (status, expected) in [
-            (TaskStatus::Active, "FOO-0001 [active] :: sample task"),
-            (TaskStatus::Done, "FOO-0001 [done] :: sample task"),
-            (TaskStatus::Backlog, "FOO-0001 [backlog] :: sample task"),
-            (TaskStatus::Cancelled, "FOO-0001 [cancelled] :: sample task"),
+            (TaskStatus::Active, "FOO-0001  [active] :: sample task"),
+            (TaskStatus::Done, "FOO-0001  [done] :: sample task"),
+            (TaskStatus::Backlog, "FOO-0001  [backlog] :: sample task"),
+            (
+                TaskStatus::Cancelled,
+                "FOO-0001  [cancelled] :: sample task",
+            ),
         ] {
             let mut task = sample_task();
             task.status = status as i32;
@@ -231,7 +235,7 @@ mod tests {
             task.status = status as i32;
             let output = render_task_for_filter(&task, TaskStatusFilter::All, true);
             assert!(
-                output.contains(&format!("{color}FOO-0001{color:#}")),
+                output.contains(&format!("{color}FOO-0001 {color:#}")),
                 "{output:?}"
             );
         }
@@ -244,7 +248,7 @@ mod tests {
         assert_eq!(
             output,
             format!(
-                "{blue}FOO-0001{blue:#} :: sample task",
+                "{blue}FOO-0001 {blue:#} :: sample task",
                 blue = color_rgb(100, 149, 237)
             )
         );
@@ -283,15 +287,15 @@ mod tests {
                 true,
             );
             let style = color_rgb(color.red(), color.green(), color.blue());
-            assert!(output.contains(&format!("{style}FOO-0001{style:#}")));
+            assert!(output.contains(&format!("{style}FOO-0001 {style:#}")));
             assert!(!output.contains(task_status_name(status)));
         }
     }
 
     #[test]
-    fn exact_status_short_lines_keep_the_existing_shape() {
+    fn exact_status_short_lines_pad_the_identifier() {
         let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false);
-        assert_eq!(output, "FOO-0001 :: sample task");
+        assert_eq!(output, "FOO-0001  :: sample task");
     }
     #[test]
     fn rich_diagnostics_keep_lineage_and_report_malformed_relationships() {
