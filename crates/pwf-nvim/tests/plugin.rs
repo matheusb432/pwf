@@ -28,6 +28,59 @@ fn summaries(listing: &Value) -> anyhow::Result<Vec<String>> {
 }
 
 #[test]
+fn registration_and_setup_leave_the_plugin_idle() -> anyhow::Result<()> {
+    let fixture = Fixture::without_server()?;
+    let result = fixture.run_lua_without_setup(
+        fixture.directory(),
+        r#"
+        local channels = vim.api.nvim_list_chans()
+        vim.cmd("runtime plugin/pwf.lua")
+        vim.cmd("runtime plugin/pwf.lua")
+        assert(vim.fn.exists(":Pwf") == 2)
+        assert(vim.fn.maparg("<Plug>(pwf-tasks)", "n") ~= "")
+        assert(vim.fn.maparg("<Plug>(pwf-notes)", "n") ~= "")
+        assert(package.loaded["pwf"] == nil)
+        require("pwf").setup({ cmd = { "unavailable-pwf-nvim" } })
+        for _, name in ipairs({ "pwf.client", "pwf.records", "pwf.picker", "fzf-lua" }) do
+          assert(package.loaded[name] == nil, name .. " loaded before invocation")
+        end
+        assert(vim.deep_equal(channels, vim.api.nvim_list_chans()))
+        return true
+    "#,
+    )?;
+    assert_eq!(result, true);
+    Ok(())
+}
+
+#[test]
+fn requests_release_children_and_deadline_timers() -> anyhow::Result<()> {
+    let fixture = Fixture::with_server()?;
+    let result = fixture.run_lua(fixture.directory(), include_str!("plugin/lifecycle.lua"))?;
+    assert_eq!(result, true);
+    Ok(())
+}
+
+#[test]
+fn missing_picker_dependency_does_not_start_a_child() -> anyhow::Result<()> {
+    let fixture = Fixture::without_server()?;
+    let result = fixture.run_lua(
+        fixture.directory(),
+        r#"
+        package.preload["fzf-lua"] = function() error("fzf-lua unavailable") end
+        local messages = {}
+        vim.notify = function(message) table.insert(messages, message) end
+        vim.cmd("runtime plugin/pwf.lua")
+        vim.cmd("Pwf")
+        assert(package.loaded["pwf.client"] == nil)
+        assert(package.loaded["pwf.records"] == nil)
+        return messages
+    "#,
+    )?;
+    assert_eq!(result, json!(["pwf: the picker requires fzf-lua"]));
+    Ok(())
+}
+
+#[test]
 fn combines_tasks_and_notes_with_project_and_status_filters() -> anyhow::Result<()> {
     let fixture = Fixture::with_server()?;
     let alpha = fixture.add_project("ALP", "alpha")?;
@@ -218,8 +271,21 @@ fn picker_switches_between_names_and_contents_with_ctrl_g() -> anyhow::Result<()
     fs::write(task_path, source)?;
     let result = fixture.run_lua(&alpha.source, r#"
         local views, options = {}, nil
+        local listings = setmetatable({}, { __mode = "v" })
+        local listing_count = 0
+        local records = require("pwf.records")
+        local list = records.list
+        records.list = function(query, done)
+          list(query, function(err, listing)
+            listing_count = listing_count + 1
+            listings[listing_count] = listing
+            done(err, listing)
+          end)
+        end
         package.loaded["fzf-lua"] = {
-          fzf_exec = function(entries, opts)
+          fzf_exec = function(contents, opts)
+            local entries = {}
+            contents(nil, function(rows) if rows then vim.list_extend(entries, rows) end end)
             options = opts
             table.insert(views, { entries = entries, prompt = opts.prompt, query = opts.query, title = opts.winopts.title })
           end,
@@ -227,12 +293,22 @@ fn picker_switches_between_names_and_contents_with_ctrl_g() -> anyhow::Result<()
         require("pwf.picker").open()
         assert(vim.wait(20000, function() return #views == 1 end, 10))
         assert(options.actions["alt-g"])
+        options.winopts.on_close()
         options.actions["ctrl-g"].fn({}, { last_query = "needle" })
         assert(vim.wait(20000, function() return #views == 2 end, 10))
+        options.winopts.on_close()
         options.actions["ctrl-g"].fn({}, { last_query = "body-only-needle" })
         assert(vim.wait(20000, function() return #views == 3 end, 10))
+        assert(listing_count == 1)
+        options.winopts.on_close()
         options.actions["alt-g"].fn({}, { last_query = "title-only-needle" })
         assert(vim.wait(20000, function() return #views == 4 end, 10))
+        assert(listing_count == 2)
+        options.winopts.on_close()
+        assert(vim.wait(2000, function()
+          collectgarbage("collect")
+          return next(listings) == nil
+        end, 10), "closed pickers retained their listings")
         return views
     "#)?;
     let views = result.as_array().context("missing picker views")?;

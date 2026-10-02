@@ -8,22 +8,33 @@ local M = {}
 local PROTOCOL_VERSION = 6
 --- Exceeds the child's 10-second request timeout, so the child's own error normally arrives first.
 local REQUEST_TIMEOUT_MS = 15000
+local REQUESTS_IN_FLIGHT_MAX = 16
 local STDERR_LINES_MAX = 20
 
 local job_id = nil ---@type integer?
-local pending = {} ---@type table<integer, fun(err: string?, value: any)>
+local pending = {} ---@type table<integer, { callback: fun(err: string?, value: any), timer: uv.uv_timer_t? }>
+local pending_count = 0
 local next_request_id = 0
-local stderr_lines = {} ---@type string[]
 
 --- Delivers one outcome outside the RPC call that produced it; later outcomes are ignored.
 local function settle(id, err, value)
-  local callback = pending[id]
-  if not callback then
+  local request = pending[id]
+  if not request then
     return
   end
   pending[id] = nil
+  pending_count = pending_count - 1
+  if request.timer and not request.timer:is_closing() then
+    request.timer:stop()
+    request.timer:close()
+  end
+  if pending_count == 0 and job_id then
+    local stopped_id = job_id
+    job_id = nil
+    vim.fn.jobstop(stopped_id)
+  end
   vim.schedule(function()
-    callback(err, value)
+    request.callback(err, value)
   end)
 end
 
@@ -36,7 +47,7 @@ local function start()
         command[1]
       )
   end
-  stderr_lines = {}
+  local stderr_lines = {}
   local started, id = pcall(vim.fn.jobstart, command, {
     rpc = true,
     on_stderr = function(_, data)
@@ -50,9 +61,8 @@ local function start()
       end
     end,
     on_exit = function(exited_id, code)
-      if job_id == exited_id then
-        job_id = nil
-      end
+      if job_id ~= exited_id then return end
+      job_id = nil
       local detail = #stderr_lines > 0 and (":\n" .. table.concat(stderr_lines, "\n")) or ""
       for request_id in pairs(pending) do
         settle(request_id, ("pwf-nvim exited with status %d%s"):format(code, detail))
@@ -66,11 +76,17 @@ local function start()
   return id
 end
 
---- Sends one operation to the child, starting it on first use.
+--- Shares a child between pending requests and stops it when they finish.
 --- @param operation string
 --- @param params table
 --- @param callback fun(err: string?, value: any) called once, on the main loop
 function M.request(operation, params, callback)
+  if pending_count >= REQUESTS_IN_FLIGHT_MAX then
+    vim.schedule(function()
+      callback(("pwf-nvim is already serving %d requests; retry after they finish"):format(REQUESTS_IN_FLIGHT_MAX))
+    end)
+    return
+  end
   if not job_id then
     local _, err = start()
     if err then
@@ -82,13 +98,15 @@ function M.request(operation, params, callback)
   end
   next_request_id = next_request_id + 1
   local id = next_request_id
-  pending[id] = callback
+  local request = { callback = callback }
+  pending[id] = request
+  pending_count = pending_count + 1
   local sent, err = pcall(vim.rpcnotify, job_id, "request", id, operation, params)
   if not sent then
     settle(id, "could not reach pwf-nvim: " .. tostring(err))
     return
   end
-  vim.defer_fn(function()
+  request.timer = vim.defer_fn(function()
     settle(id, ("pwf-nvim did not answer within %d seconds"):format(REQUEST_TIMEOUT_MS / 1000))
   end, REQUEST_TIMEOUT_MS)
 end

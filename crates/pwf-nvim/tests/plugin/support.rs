@@ -174,12 +174,21 @@ impl Fixture {
     /// path, and decodes the JSON of its return value. `await(start)` passes a node-style callback
     /// to `start` and returns `{ err, value }` once it is called.
     pub fn run_lua(&self, cwd: &Path, script: &str) -> anyhow::Result<Value> {
+        self.run_lua_without_setup(
+            cwd,
+            &format!(
+                "require(\"pwf\").setup({{ cmd = {{ [==[{child}]==] }} }})\n{script}",
+                child = release_binary("pwf-nvim").display(),
+            ),
+        )
+    }
+
+    pub(super) fn run_lua_without_setup(&self, cwd: &Path, script: &str) -> anyhow::Result<Value> {
         let script_path = self.path("script.lua");
         fs::write(
             &script_path,
             format!(
                 r#"vim.opt.runtimepath:prepend([==[{root}]==])
-require("pwf").setup({{ cmd = {{ [==[{child}]==] }} }})
 function await(start)
   local finished, outcome = false, nil
   start(function(err, value)
@@ -194,7 +203,6 @@ end)()
 io.stdout:write(vim.json.encode(result))
 "#,
                 root = repository_root().display(),
-                child = release_binary("pwf-nvim").display(),
             ),
         )?;
         let mut command = Command::new("nvim");

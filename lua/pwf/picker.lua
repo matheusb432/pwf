@@ -1,4 +1,3 @@
-local records = require("pwf.records")
 local M = {}
 local TASK_LIMIT_MAX = 100000
 
@@ -6,19 +5,20 @@ local function notify_error(err)
   vim.notify("pwf: " .. err, vim.log.levels.ERROR)
 end
 
-local function previewer(listing)
+local function previewer(resolve)
   local base = require("fzf-lua.previewer.builtin").buffer_or_file
   local class = base:extend()
   function class:parse_entry(entry)
-    local match = records.resolve(listing, entry)
-    local file = base.parse_entry(self, match.path)
-    file.line, file.col = match.line, match.col
+    local match = resolve(entry)
+    local file = base.parse_entry(self, match and match.path or "")
+    if match then file.line, file.col = match.line, match.col end
     return file
   end
   return class
 end
 
-local function open(state, listing)
+local function open(fzf, state, listing)
+  local records = require("pwf.records")
   if not listing then
     records.list({
       context_paths = state.scope == "project" and state.context_paths or nil,
@@ -26,14 +26,15 @@ local function open(state, listing)
       limit = state.limit,
     }, function(err, loaded_listing)
       if err then return notify_error(err) end
-      open(state, loaded_listing)
+      open(fzf, state, loaded_listing)
     end)
     return
   end
-  local loaded, fzf = pcall(require, "fzf-lua")
-  if not loaded then return notify_error("the picker requires fzf-lua") end
+  local function resolve(entry)
+    if listing then return records.resolve(listing, entry) end
+  end
   local function reopen(changes, opts, retain_listing)
-    open(vim.tbl_extend("force", state, changes, { query = opts.last_query }), retain_listing and listing or nil)
+    open(fzf, vim.tbl_extend("force", state, changes, { query = opts.last_query }), retain_listing and listing or nil)
   end
   local actions = {
     ["ctrl-g"] = {
@@ -66,7 +67,7 @@ local function open(state, listing)
   for key, command in pairs({ enter = "edit", ["ctrl-s"] = "split", ["ctrl-v"] = "vsplit", ["ctrl-t"] = "tabedit" }) do
     actions[key] = {
       fn = function(selected)
-        local file = selected[1] and records.resolve(listing, selected[1])
+        local file = selected[1] and resolve(selected[1])
         if not file then return end
         local open_err = records.open(file, command)
         if open_err then notify_error(open_err) end
@@ -75,23 +76,37 @@ local function open(state, listing)
     }
   end
   local content_mode = state.mode == "contents"
-  fzf.fzf_exec(content_mode and listing.contents or listing.names, {
+  fzf.fzf_exec(function(_, write_lines)
+    if listing then write_lines(listing[state.mode]) end
+    write_lines(nil)
+  end, {
     prompt = content_mode and "Content> " or "Names> ",
     query = state.query,
+    no_resume = true,
+    no_hide = true,
+    -- Keep action queries without retaining the listing in fzf-lua's resume options.
+    __resume_set = function(what, value, opts)
+      if what == "query" then opts.last_query = value end
+    end,
     winopts = {
       title = (" pwf · %s · %s tasks + notes · %s "):format(listing.project or "all projects", state.status,
         content_mode and "contents" or "names"),
+      -- Actions run after the window closes; release this view after they finish.
+      on_close = function() vim.schedule(function() listing = nil end) end,
     },
     fzf_opts = { ["--no-multi"] = true, ["--delimiter"] = "\t", ["--with-nth"] = "3..", ["--tiebreak"] = "index" },
     -- fzf-lua deep-copies previewers; construct the class for this picker instance.
-    previewer = { _ctor = function() return previewer(listing) end },
+    previewer = { _ctor = function() return previewer(resolve) end },
     actions = actions,
   })
 end
 
 function M.open()
+  local loaded, fzf = pcall(require, "fzf-lua")
+  if not loaded then return notify_error("the picker requires fzf-lua") end
+  local records = require("pwf.records")
   local config = require("pwf").config
-  open({
+  open(fzf, {
     mode = "names",
     scope = config.task_scope,
     status = config.task_status,
