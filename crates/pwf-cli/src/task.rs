@@ -267,29 +267,25 @@ pub async fn run(
     let output = match command {
         Command::Task(arguments) => match &arguments.command {
             TaskCommand::Add(arguments) => {
-                add::run(arguments, console, task_status_colors, client, projects).await?
+                add::run(arguments, console, settings, client, projects).await?
             }
             TaskCommand::Clone(arguments) => {
-                clone::run(arguments, console, task_status_colors, client, projects).await?
+                clone::run(arguments, console, settings, client, projects).await?
             }
             TaskCommand::List(arguments) => {
                 list::run(arguments, console, settings, client, projects).await?
             }
-            TaskCommand::Done(arguments) => {
-                done::run(arguments, console, task_status_colors, client).await?
-            }
+            TaskCommand::Done(arguments) => done::run(arguments, console, settings, client).await?,
             TaskCommand::Cancel(arguments) => {
-                cancel::run(arguments, console, task_status_colors, client).await?
+                cancel::run(arguments, console, settings, client).await?
             }
             TaskCommand::Activate(arguments) => {
-                activate::run(arguments, console, task_status_colors, client).await?
+                activate::run(arguments, console, settings, client).await?
             }
             TaskCommand::Backlog(arguments) => {
-                backlog::run(arguments, console, task_status_colors, client).await?
+                backlog::run(arguments, console, settings, client).await?
             }
-            TaskCommand::Edit(arguments) => {
-                edit::run(arguments, console, task_status_colors, client).await?
-            }
+            TaskCommand::Edit(arguments) => edit::run(arguments, console, settings, client).await?,
             TaskCommand::Get(arguments) => {
                 get::run(arguments, console, settings, client, projects).await?
             }
@@ -297,7 +293,7 @@ pub async fn run(
                 dag::run(arguments, console, task_status_colors, client).await?
             }
             TaskCommand::Remove(arguments) => {
-                remove::run(arguments, console, task_status_colors, client).await?
+                remove::run(arguments, console, settings, client).await?
             }
             TaskCommand::Sections(arguments) => sections::run(arguments, client).await?,
         },

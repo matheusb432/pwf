@@ -1,6 +1,9 @@
 use anstyle::{AnsiColor, Color};
 use pwf_client::pb;
-use pwf_models::{settings::TaskStatusColors, task::TaskStatus};
+use pwf_models::{
+    settings::{TaskStatusColors, UserSettings},
+    task::TaskStatus,
+};
 
 use crate::render::{paint, rgb_color};
 
@@ -9,16 +12,18 @@ pub(in crate::task) fn render_task_summary(
     title: &str,
     status: pb::TaskStatus,
     status_visible: bool,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     color_on: bool,
 ) -> String {
     // Plain output is a raw-text contract; Markdown emphasis is reserved for ANSI rendering.
+    let task_status_colors = settings.task_status_colors();
+    let separator = settings.task_title_separator();
     let identifier = render_task_identifier(identifier, status, task_status_colors, color_on);
     if !status_visible {
-        return format!("{identifier} :: {title}");
+        return format!("{identifier}{separator}{title}");
     }
     format!(
-        "{identifier} [{}] :: {title}",
+        "{identifier} [{}]{separator}{title}",
         render_status(status, task_status_colors, color_on)
     )
 }

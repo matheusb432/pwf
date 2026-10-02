@@ -17,8 +17,11 @@ use thiserror::Error;
 use super::{Agent, SessionEffort};
 use crate::{
     ports::{
-        agent::AgentClient, project_directory::ProjectDirectoryClient, project_store::ProjectStore,
+        agent::AgentClient,
+        project_directory::ProjectDirectoryClient,
+        project_store::ProjectStore,
         task_vault::TaskVault,
+        user_settings::{UserSettingsLoadError, UserSettingsReader},
     },
     project::{get_projects, runtime_path},
     task::{blocked_by, resolve_task_project, task_projection},
@@ -26,6 +29,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum PlanSessionError {
+    #[error(transparent)]
+    Settings(#[from] UserSettingsLoadError),
     #[error(transparent)]
     FindTask(anyhow::Error),
     #[error("Task '{id}' is not launchable: {launch}")]
@@ -62,17 +67,19 @@ pub enum SessionProjectPathError {
     NonUnicode,
 }
 
-pub struct SessionPlanningClients<A, P> {
+pub struct SessionPlanningClients<A, P, S> {
     pub(crate) agent: A,
     pub(crate) project_directory: P,
+    pub(crate) settings: S,
 }
 
-impl<A, P> SessionPlanningClients<A, P> {
+impl<A, P, S> SessionPlanningClients<A, P, S> {
     #[must_use]
-    pub const fn new(agent: A, project_directory: P) -> Self {
+    pub const fn new(agent: A, project_directory: P, settings: S) -> Self {
         Self {
             agent,
             project_directory,
+            settings,
         }
     }
 }
@@ -91,8 +98,13 @@ pub async fn execute(
     store: &impl TaskVault,
     project_store: &impl ProjectStore,
     home: &HomeDirectory,
-    clients: &SessionPlanningClients<impl AgentClient, impl ProjectDirectoryClient>,
+    clients: &SessionPlanningClients<
+        impl AgentClient,
+        impl ProjectDirectoryClient,
+        impl UserSettingsReader,
+    >,
 ) -> Result<PlannedSession, PlanSessionError> {
+    let settings = clients.settings.load()?;
     let (project, first_task, mut warnings) =
         plan_task(command.task_ids.first(), store, project_store).await?;
     let first_title = first_task.heading.clone();
@@ -105,6 +117,7 @@ pub async fn execute(
                 command.task_ids.first(),
                 command.agent,
                 command.effort,
+                settings.task_title_separator(),
             )
             .map_err(PlanSessionError::RenderThreadTitle)?,
         )
@@ -356,6 +369,7 @@ struct ThreadTitleTemplate<'a> {
     project: &'a str,
     effort: SessionEffort,
     agent: &'static str,
+    title_separator: &'a pwf_models::settings::TaskTitleSeparator,
 }
 
 fn thread_title(
@@ -364,8 +378,10 @@ fn thread_title(
     task_id: &TaskId,
     agent: Agent,
     effort: SessionEffort,
+    title_separator: &pwf_models::settings::TaskTitleSeparator,
 ) -> Result<String, askama::Error> {
     ThreadTitleTemplate {
+        title_separator,
         task_id,
         task_id_brief: task_id_brief(task_id),
         task_title: heading.as_ref(),

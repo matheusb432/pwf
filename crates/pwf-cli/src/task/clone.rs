@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_client::{pb::CloneTaskRequest, project::ProjectClient, task::TaskClient};
-use pwf_models::{project::ProjectId, settings::TaskStatusColors};
+use pwf_models::{project::ProjectId, settings::UserSettings};
 
 use super::{
     Identifier,
@@ -20,7 +20,7 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
     projects: &ProjectClient,
 ) -> Result<String, crate::error::Error> {
@@ -43,7 +43,7 @@ pub(super) async fn run(
         TaskMutationAction::Cloned,
         &result.id,
         result.task.as_ref(),
-        colors,
+        settings,
         console.color(),
     )
     .map_err(Into::into)

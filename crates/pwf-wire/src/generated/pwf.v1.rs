@@ -2702,6 +2702,9 @@ pub struct GetUserSettingsResponse {
     pub datetime_format: ::prost::alloc::string::String,
     #[prost(uint64, tag = "7")]
     pub default_list_page_size: u64,
+    /// Exact separator, including spaces. Absence uses " :: "; empty concatenates ID and title.
+    #[prost(string, optional, tag = "8")]
+    pub task_title_separator: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Generated client implementations.
 pub mod settings_service_client {

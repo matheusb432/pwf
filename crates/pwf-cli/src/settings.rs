@@ -3,7 +3,10 @@
 use anyhow::Context as _;
 use pwf_client::{pb, settings::SettingsClient};
 use pwf_models::{
-    settings::{NoteStatusColors, ProjectStatusColors, RgbColor, TaskStatusColors, UserSettings},
+    settings::{
+        NoteStatusColors, ProjectStatusColors, RgbColor, TaskStatusColors, TaskTitleSeparator,
+        UserSettings,
+    },
     task::{
         PriorityTier, TaskListLimit,
         order::{OrderDirection, OrderField, OrderSpec},
@@ -57,6 +60,13 @@ fn decode(response: pb::GetUserSettingsResponse) -> anyhow::Result<UserSettings>
         default_sort_order,
     )
     .with_datetime_format(response.datetime_format.try_into()?)
+    .with_task_title_separator(
+        response
+            .task_title_separator
+            .map(TaskTitleSeparator::try_new)
+            .transpose()?
+            .unwrap_or_default(),
+    )
     .with_default_list_page_size(TaskListLimit::try_new(usize::try_from(
         response.default_list_page_size,
     )?)?))
@@ -104,6 +114,7 @@ mod tests {
 
     fn valid_response() -> pb::GetUserSettingsResponse {
         pb::GetUserSettingsResponse {
+            task_title_separator: Some(" :: ".to_string()),
             task_status_colors: Some(pb::TaskStatusColors {
                 active: Some(pb::RgbColor {
                     red: 100,
@@ -196,6 +207,27 @@ mod tests {
             response.default_sort_order = Some(order);
             assert!(decode(response).is_err());
         }
+    }
+
+    #[test]
+    fn settings_response_preserves_empty_separators_and_defaults_absence() {
+        let mut response = valid_response();
+        response.task_title_separator = None;
+        assert_eq!(
+            decode(response).unwrap().task_title_separator().as_ref(),
+            " :: "
+        );
+        for separator in ["", " ", " → "] {
+            let mut response = valid_response();
+            response.task_title_separator = Some(separator.to_string());
+            assert_eq!(
+                decode(response).unwrap().task_title_separator().as_ref(),
+                separator
+            );
+        }
+        let mut response = valid_response();
+        response.task_title_separator = Some("\u{1b}[31m".to_string());
+        assert!(decode(response).is_err());
     }
 
     #[test]

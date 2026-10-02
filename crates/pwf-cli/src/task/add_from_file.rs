@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use clap::Args;
 use pwf_client::{pb::CreateTaskFromFileRequest, project::ProjectClient, task::TaskClient};
-use pwf_models::{project::ProjectId, settings::TaskStatusColors};
+use pwf_models::{project::ProjectId, settings::UserSettings};
 
 use super::render::{TaskMutationAction, render_mutation};
 use crate::console::Console;
@@ -21,7 +21,7 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
     projects: &ProjectClient,
 ) -> Result<String, crate::error::Error> {
@@ -42,7 +42,7 @@ pub(super) async fn run(
         TaskMutationAction::Added,
         &added.id,
         added.task.as_ref(),
-        colors,
+        settings,
         console.color(),
     )
     .map_err(Into::into)

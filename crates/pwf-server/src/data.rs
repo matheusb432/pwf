@@ -10,7 +10,7 @@ const SNAPSHOT_FORMAT_VERSION: u32 = 1;
 const SNAPSHOT_APPLICATION: &str = "pwf";
 const SNAPSHOT_MANIFEST_FILE_NAME: &str = "manifest.json";
 const SNAPSHOT_DATABASE_FILE_NAME: &str = "pwf.sqlite3";
-const SNAPSHOT_CONFIG_FILE_NAME: &str = "config.toml";
+const SNAPSHOT_SETTINGS_FILE_NAMES: [&str; 2] = ["config.toml", "titles.toml"];
 const STAGED_DATABASE_SUFFIX: &str = ".import";
 
 pub struct StagedSnapshot {
@@ -73,14 +73,14 @@ async fn write_snapshot(snapshot_directory: &Path) -> anyhow::Result<i64> {
         &snapshot_directory.join(SNAPSHOT_DATABASE_FILE_NAME),
     )
     .await?;
-    if let Some(config_path) = pwf_infra::user_settings::config_path()
-        && config_path.is_file()
-    {
-        fs::copy(
-            &config_path,
-            snapshot_directory.join(SNAPSHOT_CONFIG_FILE_NAME),
-        )
-        .with_context(|| format!("copying user settings {}", config_path.display()))?;
+    if let Some(config_path) = pwf_infra::user_settings::config_path() {
+        for filename in SNAPSHOT_SETTINGS_FILE_NAMES {
+            let path = config_path.with_file_name(filename);
+            if path.is_file() {
+                fs::copy(&path, snapshot_directory.join(filename))
+                    .with_context(|| format!("copying user settings {}", path.display()))?;
+            }
+        }
     }
     let manifest = serde_json::json!({
         "format_version": SNAPSHOT_FORMAT_VERSION,
@@ -120,18 +120,22 @@ fn read_manifest(snapshot_directory: &Path) -> anyhow::Result<()> {
 }
 
 fn restore_user_settings(snapshot_directory: &Path) -> anyhow::Result<()> {
-    let snapshot_config_path = snapshot_directory.join(SNAPSHOT_CONFIG_FILE_NAME);
-    if !snapshot_config_path.is_file() {
-        return Ok(());
+    for filename in SNAPSHOT_SETTINGS_FILE_NAMES {
+        let snapshot_path = snapshot_directory.join(filename);
+        if !snapshot_path.is_file() {
+            continue;
+        }
+        let config_path = pwf_infra::user_settings::config_path()
+            .context("resolving the user settings path to restore configuration")?
+            .with_file_name(filename);
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("creating user settings directory {}", parent.display())
+            })?;
+        }
+        fs::copy(&snapshot_path, &config_path)
+            .with_context(|| format!("writing user settings {}", config_path.display()))?;
     }
-    let config_path = pwf_infra::user_settings::config_path()
-        .context("resolving the user settings path to restore config.toml")?;
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating user settings directory {}", parent.display()))?;
-    }
-    fs::copy(&snapshot_config_path, &config_path)
-        .with_context(|| format!("writing user settings {}", config_path.display()))?;
     Ok(())
 }
 

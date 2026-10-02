@@ -5,6 +5,14 @@ pub use datetime::{DateTimeFormat, DateTimeFormatError};
 
 use crate::task::{PriorityTier, TaskListLimit, order::OrderSpec};
 
+/// Exact text between a task identifier and title, including surrounding spaces.
+#[nutype::nutype(
+    validate(len_char_max = 32, predicate = |value| !value.chars().any(char::is_control)),
+    default = " :: ",
+    derive(Clone, Debug, Default, Eq, PartialEq, AsRef, Display, TryFrom)
+)]
+pub struct TaskTitleSeparator(String);
+
 /// An RGB color parsed from the user-settings `#RRGGBB` representation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RgbColor {
@@ -206,6 +214,7 @@ pub struct UserSettings {
     default_sort_order: OrderSpec,
     datetime_format: DateTimeFormat,
     default_list_page_size: TaskListLimit,
+    task_title_separator: TaskTitleSeparator,
 }
 
 impl UserSettings {
@@ -225,6 +234,7 @@ impl UserSettings {
             default_sort_order,
             datetime_format: DateTimeFormat::default(),
             default_list_page_size: TaskListLimit::default(),
+            task_title_separator: TaskTitleSeparator::default(),
         }
     }
 
@@ -237,6 +247,17 @@ impl UserSettings {
     #[must_use]
     pub const fn default_list_page_size(&self) -> TaskListLimit {
         self.default_list_page_size
+    }
+
+    #[must_use]
+    pub fn with_task_title_separator(mut self, separator: TaskTitleSeparator) -> Self {
+        self.task_title_separator = separator;
+        self
+    }
+
+    #[must_use]
+    pub const fn task_title_separator(&self) -> &TaskTitleSeparator {
+        &self.task_title_separator
     }
 
     #[must_use]

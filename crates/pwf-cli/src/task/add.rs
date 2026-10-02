@@ -6,7 +6,7 @@ use pwf_client::{
 };
 use pwf_models::{
     project::ProjectId,
-    settings::TaskStatusColors,
+    settings::UserSettings,
     task::{TagInput, TaskTags},
 };
 
@@ -63,32 +63,22 @@ struct DirectArguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
 ) -> Result<String, crate::error::Error> {
     match arguments.command.as_ref() {
         Some(Command::FromFile(arguments)) => {
-            super::add_from_file::run(arguments, console, task_status_colors, client, projects)
-                .await
+            super::add_from_file::run(arguments, console, settings, client, projects).await
         }
-        None => {
-            run_direct(
-                &arguments.direct,
-                console,
-                task_status_colors,
-                client,
-                projects,
-            )
-            .await
-        }
+        None => run_direct(&arguments.direct, console, settings, client, projects).await,
     }
 }
 
 async fn run_direct(
     arguments: &DirectArguments,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
 ) -> Result<String, crate::error::Error> {
@@ -127,7 +117,7 @@ async fn run_direct(
             TaskMutationAction::Added,
             &added.id,
             added.task.as_ref(),
-            task_status_colors,
+            settings,
             console.color(),
         )
         .map_err(Into::into),

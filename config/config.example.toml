@@ -4,6 +4,10 @@ default_priority = "medium" # low | medium | high | highest
 # Accepts field[:asc|desc]. Bare created/id/priority descend; project-id/effort/title ascend.
 default_sort_order = "id" # created | id | project-id | priority | effort | title
 
+# Task titles use the companion personal config pwf/titles.toml (titles.example.toml):
+# [task]
+# separator = " :: " # exact text including spaces; " " renders ID title
+
 [colors.task]
 active = "#6495ED"
 done = "#A3E635"

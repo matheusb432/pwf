@@ -17,7 +17,7 @@ use pwf_models::{
     project::ProjectId,
     settings::{
         NoteStatusColors, ProjectStatusColors, RgbColor, RgbColorError, TaskStatusColors,
-        UserSettings,
+        TaskTitleSeparator, TaskTitleSeparatorError, UserSettings,
     },
     task::{
         PriorityTier, PriorityTierError, TaskListLimit, TaskListLimitError,
@@ -35,6 +35,33 @@ struct UserSettingsDocument {
     default_sort_order: Option<String>,
     datetime_format: Option<String>,
     task_body: TaskBodyDocument,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct TitlesDocument {
+    task: TaskTitleDocument,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct TaskTitleDocument {
+    separator: Option<String>,
+}
+
+impl TitlesDocument {
+    fn parse(bytes: Vec<u8>) -> Result<TaskTitleSeparator, UserSettingsDocumentError> {
+        let source = String::from_utf8(bytes)?;
+        let document: Self =
+            toml::from_str(&source).map_err(UserSettingsDocumentError::TomlSchema)?;
+        document
+            .task
+            .separator
+            .map(TaskTitleSeparator::try_new)
+            .transpose()
+            .map_err(UserSettingsDocumentError::TitleSeparator)
+            .map(Option::unwrap_or_default)
+    }
 }
 
 impl UserSettingsDocument {
@@ -247,6 +274,8 @@ fn configured_color(
 
 #[derive(Debug, thiserror::Error)]
 enum UserSettingsDocumentError {
+    #[error("`task.separator` is invalid: {0}")]
+    TitleSeparator(#[source] TaskTitleSeparatorError),
     #[error("`default_list_page_size` is invalid: {0}")]
     ListPageSize(#[source] TaskListLimitError),
     #[error(transparent)]
@@ -312,23 +341,27 @@ impl TomlSettingsStore {
         let Some(path) = self.path.as_deref() else {
             return default_settings();
         };
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return default_settings();
-            }
-            Err(error) => {
-                return Err(anyhow::Error::new(error)
-                    .context(format!("reading user settings {}", path.display()))
-                    .into());
-            }
-        };
-        let settings = UserSettingsDocument::parse(bytes)
+        let bytes = read_settings(path)?;
+        let (settings, task_body) = UserSettingsDocument::parse(bytes)
             .and_then(UserSettingsDocument::into_validated)
             .map_err(|source| {
                 UserSettingsConfigurationError::new(path.to_path_buf(), anyhow::Error::new(source))
             })?;
-        Ok(settings)
+        let titles_path = path.with_file_name("titles.toml");
+        let separator = TitlesDocument::parse(read_settings(&titles_path)?).map_err(|source| {
+            UserSettingsConfigurationError::new(titles_path, anyhow::Error::new(source))
+        })?;
+        Ok((settings.with_task_title_separator(separator), task_body))
+    }
+}
+
+fn read_settings(path: &std::path::Path) -> Result<Vec<u8>, UserSettingsLoadError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(anyhow::Error::new(error)
+            .context(format!("reading user settings {}", path.display()))
+            .into()),
     }
 }
 
@@ -365,6 +398,45 @@ mod tests {
     };
 
     use super::TomlSettingsStore;
+
+    #[test]
+    fn task_title_separator_loads_without_the_main_config_and_reloads_exact_spacing() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = TomlSettingsStore::new(Some(directory.path().join("config.toml")));
+        let path = directory.path().join("titles.toml");
+        assert_eq!(
+            store.load().unwrap().task_title_separator().as_ref(),
+            " :: "
+        );
+        for separator in [" ", "", " → ", "  ::  "] {
+            fs::write(&path, format!("[task]\nseparator = {separator:?}\n")).unwrap();
+            assert_eq!(
+                store.load().unwrap().task_title_separator().as_ref(),
+                separator
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_title_config_reports_its_path_and_rejects_every_settings_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = TomlSettingsStore::new(Some(directory.path().join("config.toml")));
+        let path = directory.path().join("titles.toml");
+        for source in [
+            "[task]\nseparator = 1\n".to_string(),
+            "[task]\nunknown = true\n".to_string(),
+            "[task]\nseparator = \"\\n\"\n".to_string(),
+            format!("[task]\nseparator = {:?}\n", "x".repeat(33)),
+        ] {
+            fs::write(&path, source).unwrap();
+            let error = store.load().unwrap_err();
+            assert!(
+                error.to_string().contains(&*path.to_string_lossy()),
+                "{error}"
+            );
+            assert!(store.load_task_body_presets().is_err());
+        }
+    }
 
     #[test]
     fn task_body_presets_resolve_user_presets_and_project_overrides() {

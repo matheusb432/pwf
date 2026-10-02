@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_client::{pb::CancelTaskRequest, task::TaskClient};
-use pwf_models::{settings::TaskStatusColors, task::TaskReport};
+use pwf_models::{settings::UserSettings, task::TaskReport};
 
 use super::{
     Identifier,
@@ -23,7 +23,7 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments.identifier.id();
@@ -47,7 +47,7 @@ pub(super) async fn run(
         TaskMutationAction::Cancelled,
         id.as_ref(),
         result.task.as_ref(),
-        task_status_colors,
+        settings,
         console.color(),
     )
 }

@@ -5,6 +5,48 @@ use support::systemctl_stub;
 
 use super::support;
 
+#[cfg(unix)]
+#[test]
+fn data_snapshot_transfers_the_personal_title_config_without_a_main_config() -> anyhow::Result<()> {
+    use assert_cmd::prelude::OutputAssertExt as _;
+
+    let fixture = support::SessionFixture::new()?;
+    let source = "[task]\nseparator = \" \"\n";
+    let title_path = fixture.database.write_title_config(source)?;
+    let config_root = title_path.parent().unwrap().parent().unwrap();
+    let server =
+        std::path::Path::new(support::command().get_program()).with_file_name("pwf-server");
+    let snapshot = fixture.directory().join("snapshot");
+    std::process::Command::new(&server)
+        .env(
+            "PWF_DATABASE_PATH",
+            fixture.directory().join("projects.sqlite3"),
+        )
+        .env("XDG_CONFIG_HOME", config_root)
+        .args(["data", "export", "--to"])
+        .arg(&snapshot)
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(snapshot.join("titles.toml"))?, source);
+    assert!(!snapshot.join("config.toml").exists());
+
+    let target = tempfile::tempdir()?;
+    for step in ["stage-import", "finish-import"] {
+        std::process::Command::new(&server)
+            .env("PWF_DATABASE_PATH", target.path().join("pwf.sqlite3"))
+            .env("XDG_CONFIG_HOME", target.path().join("config"))
+            .args(["data", step, "--from"])
+            .arg(&snapshot)
+            .assert()
+            .success();
+    }
+    assert_eq!(
+        fs::read_to_string(target.path().join("config/pwf/titles.toml"))?,
+        source
+    );
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn doctor_formats_reports_and_keeps_json_unstyled() {

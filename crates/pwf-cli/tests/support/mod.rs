@@ -82,6 +82,14 @@ impl DatabaseFixture {
         Ok(path)
     }
 
+    #[cfg(unix)]
+    pub fn write_title_config(&self, source: &str) -> anyhow::Result<PathBuf> {
+        let path = config_directory(&self.home).join("pwf").join("titles.toml");
+        fs::create_dir_all(path.parent().context("title config path has no parent")?)?;
+        fs::write(&path, source)?;
+        Ok(path)
+    }
+
     pub fn add_directory_project(
         &self,
         project_id: &ProjectId,

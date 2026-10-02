@@ -108,6 +108,7 @@ async fn assert_stale_dispatch(
             preparations: preparations.clone(),
         },
         ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore::new(None),
     );
     let mut confirmation = EditThenAccept {
         store: store.clone(),

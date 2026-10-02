@@ -157,12 +157,7 @@ pub(super) async fn run(
         }
         None => {}
     }
-    Ok(render_list(
-        &result,
-        &location,
-        settings.task_status_colors(),
-        console.color(),
-    ))
+    Ok(render_list(&result, &location, settings, console.color()))
 }
 
 /// Parses a `field[:direction]` sort key, using field-specific direction defaults.

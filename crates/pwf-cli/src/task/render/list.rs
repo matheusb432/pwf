@@ -4,14 +4,14 @@ use pwf_client::pb::{
     BlockedByResolutionKind, BlockedByStatus, ListTasksResponse, ListedTask, TaskIssue,
     TaskIssueKind, TaskStatus, TaskStatusFilter,
 };
-use pwf_models::settings::TaskStatusColors;
+use pwf_models::settings::UserSettings;
 
 use super::render_task_summary;
 
 pub(in crate::task) fn render_list(
     result: &ListTasksResponse,
     location: &str,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     on: bool,
 ) -> String {
     let status_filter =
@@ -39,14 +39,7 @@ pub(in crate::task) fn render_list(
     let mut out = String::new();
     let last_idx = result.tasks.len() - 1;
     for (idx, task) in result.tasks.iter().enumerate() {
-        render_list_task(
-            &mut out,
-            task,
-            status_filter,
-            idx == last_idx,
-            task_status_colors,
-            on,
-        );
+        render_list_task(&mut out, task, status_filter, idx == last_idx, settings, on);
     }
     if result.hidden > 0 {
         if !out.ends_with('\n') {
@@ -95,7 +88,7 @@ fn render_list_task(
     task: &ListedTask,
     status_filter: TaskStatusFilter,
     last: bool,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     on: bool,
 ) {
     let status = TaskStatus::try_from(task.status).unwrap_or(TaskStatus::Unspecified);
@@ -104,7 +97,7 @@ fn render_list_task(
         &task.heading,
         status,
         status_filter == TaskStatusFilter::All && !on,
-        task_status_colors,
+        settings,
         on,
     ));
     if !last {
@@ -166,7 +159,7 @@ fn task_status_name(status: TaskStatus) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::settings::RgbColor;
+    use pwf_models::settings::{NoteStatusColors, ProjectStatusColors, RgbColor, TaskStatusColors};
 
     use super::*;
     use crate::test_style::{assert_plain, color_rgb};
@@ -204,7 +197,7 @@ mod tests {
             task,
             status_filter,
             true,
-            TaskStatusColors::default(),
+            &UserSettings::default(),
             on,
         );
         output
@@ -265,6 +258,13 @@ mod tests {
             Some(RgbColor::new(7, 8, 9)),
             Some(RgbColor::new(10, 11, 12)),
         );
+        let settings = UserSettings::new(
+            colors,
+            ProjectStatusColors::default(),
+            NoteStatusColors::default(),
+            pwf_models::task::PriorityTier::Medium,
+            pwf_models::task::order::OrderSpec::default(),
+        );
         for (status, color) in [
             (TaskStatus::Active, RgbColor::new(1, 2, 3)),
             (TaskStatus::Done, RgbColor::new(4, 5, 6)),
@@ -279,7 +279,7 @@ mod tests {
                 &task,
                 TaskStatusFilter::All,
                 true,
-                colors,
+                &settings,
                 true,
             );
             let style = color_rgb(color.red(), color.green(), color.blue());

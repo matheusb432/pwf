@@ -120,14 +120,8 @@ pub(in crate::task) fn rich(
     color: bool,
     columns: Option<usize>,
 ) -> anyhow::Result<String> {
-    let summary = super::render_task_summary(
-        task.id,
-        task.title,
-        task.status,
-        false,
-        settings.task_status_colors(),
-        color,
-    );
+    let summary =
+        super::render_task_summary(task.id, task.title, task.status, false, settings, color);
     let mut fields = vec![Field::new("Path", task.path)];
     for (label, value) in [
         (
@@ -180,7 +174,7 @@ pub(in crate::task) fn rich_list(
                 .project_task_path
                 .as_deref()
                 .unwrap_or("managed project task paths"),
-            settings.task_status_colors(),
+            settings,
             color,
         ));
     }

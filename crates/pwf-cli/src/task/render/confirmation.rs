@@ -1,5 +1,5 @@
 use pwf_client::pb::{TaskMutationSummary, TaskStatus};
-use pwf_models::settings::TaskStatusColors;
+use pwf_models::settings::UserSettings;
 
 use super::render_task_summary;
 
@@ -38,33 +38,27 @@ pub(in crate::task) fn render_mutation(
     action: TaskMutationAction,
     task_id: &str,
     task: Option<&TaskMutationSummary>,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     color_on: bool,
 ) -> anyhow::Result<String> {
     let Some(task) = task else {
         return Ok(format!(
-            "{} task: {task_id} :: [title unavailable]",
-            action.label()
+            "{} task: {task_id}{}[title unavailable]",
+            action.label(),
+            settings.task_title_separator()
         ));
     };
     let status = TaskStatus::try_from(task.status)
         .ok()
         .filter(|status| *status != TaskStatus::Unspecified)
         .ok_or_else(|| anyhow::anyhow!("pwf-server returned an invalid task status"))?;
-    let summary = render_task_summary(
-        &task.id,
-        &task.title,
-        status,
-        false,
-        task_status_colors,
-        color_on,
-    );
+    let summary = render_task_summary(&task.id, &task.title, status, false, settings, color_on);
     Ok(format!("{} task: {summary}", action.label()))
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::settings::RgbColor;
+    use pwf_models::settings::{NoteStatusColors, ProjectStatusColors, RgbColor, TaskStatusColors};
 
     use super::*;
     use crate::test_style::color_rgb;
@@ -76,7 +70,7 @@ mod tests {
                 TaskMutationAction::Removed,
                 "FOO-0001",
                 None,
-                TaskStatusColors::default(),
+                &UserSettings::default(),
                 true
             )
             .unwrap(),
@@ -91,6 +85,13 @@ mod tests {
             Some(RgbColor::new(4, 5, 6)),
             Some(RgbColor::new(7, 8, 9)),
             Some(RgbColor::new(10, 11, 12)),
+        );
+        let settings = UserSettings::new(
+            colors,
+            ProjectStatusColors::default(),
+            NoteStatusColors::default(),
+            pwf_models::task::PriorityTier::Medium,
+            pwf_models::task::order::OrderSpec::default(),
         );
         for (action, status, label, style) in [
             (
@@ -153,9 +154,10 @@ mod tests {
                 title: "sample task".into(),
                 status: status as i32,
             };
-            let plain = render_mutation(action, "FOO-0001", Some(&task), colors, false).unwrap();
+            let plain = render_mutation(action, "FOO-0001", Some(&task), &settings, false).unwrap();
             assert_eq!(plain, format!("{label} task: FOO-0001 :: sample task"));
-            let colored = render_mutation(action, "FOO-0001", Some(&task), colors, true).unwrap();
+            let colored =
+                render_mutation(action, "FOO-0001", Some(&task), &settings, true).unwrap();
             assert_eq!(
                 colored,
                 format!("{label} task: {style}FOO-0001{style:#} :: sample task")

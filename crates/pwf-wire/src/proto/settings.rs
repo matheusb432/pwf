@@ -16,6 +16,7 @@ pub fn get_user_settings_response(settings: &UserSettings) -> pb::GetUserSetting
     let project_colors = settings.project_status_colors();
     let note_colors = settings.note_status_colors();
     pb::GetUserSettingsResponse {
+        task_title_separator: Some(settings.task_title_separator().to_string()),
         datetime_format: settings.datetime_format().as_ref().to_string(),
         default_list_page_size: settings.default_list_page_size().get() as u64,
         project_status_colors: Some(pb::ProjectStatusColors {

@@ -60,7 +60,11 @@ async fn planned_model(
     command: &PlanSession,
     store: &InMemoryStore,
     pool: &sqlx::SqlitePool,
-    clients: &SessionPlanningClients<AgentStub, ExistingProjectDirectory>,
+    clients: &SessionPlanningClients<
+        AgentStub,
+        ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore,
+    >,
 ) -> anyhow::Result<(AgentModel, SessionEffort)> {
     let dry_run = plan(command, store, pool, clients).await?;
     Ok((dry_run.plan.launch.model, dry_run.plan.launch.effort))
@@ -70,7 +74,11 @@ async fn plan(
     command: &PlanSession,
     store: &InMemoryStore,
     pool: &sqlx::SqlitePool,
-    clients: &SessionPlanningClients<AgentStub, ExistingProjectDirectory>,
+    clients: &SessionPlanningClients<
+        AgentStub,
+        ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore,
+    >,
 ) -> anyhow::Result<DryRunSession> {
     let planned = plan_session::execute(
         command,
@@ -94,7 +102,11 @@ async fn planning_uses_only_the_explicit_model_override(pool: sqlx::SqlitePool) 
         ..task_record("FOO-0001")
     };
     let store = InMemoryStore::default().with_project("foo", vec![record]);
-    let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
+    let clients = SessionPlanningClients::new(
+        AgentStub,
+        ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore::new(None),
+    );
 
     let (default_model, effort) = planned_model(&command(None), &store, &pool, &clients)
         .await
@@ -127,7 +139,11 @@ async fn planning_uses_one_compound_identity_and_keeps_task_body_order(
     let store = InMemoryStore::default()
         .with_project("foo", vec![first, second])
         .with_failure(crate::support::InMemoryStoreFailure::ListTasks);
-    let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
+    let clients = SessionPlanningClients::new(
+        AgentStub,
+        ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore::new(None),
+    );
     let mut command = command(None);
     command.task_ids =
         SessionTaskIds::try_new(["FOO-0002".parse().unwrap(), "FOO-0001".parse().unwrap()])
@@ -170,7 +186,11 @@ async fn direct_blocker_warnings_include_unresolved_missing_and_malformed_data(
 ) {
     crate::support::insert_unrelated_invalid_project(&pool).await;
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
-    let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
+    let clients = SessionPlanningClients::new(
+        AgentStub,
+        ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore::new(None),
+    );
     insert_project(
         &pool,
         "AUX",
@@ -250,7 +270,11 @@ async fn direct_blocker_warnings_include_unresolved_missing_and_malformed_data(
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn planning_rejects_missing_ambiguous_and_closed_tasks(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
-    let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
+    let clients = SessionPlanningClients::new(
+        AgentStub,
+        ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore::new(None),
+    );
     for (records, expected) in [
         (vec![], "Active task not found: FOO-0001"),
         (
@@ -290,7 +314,11 @@ async fn planning_accepts_unlinked_active_tasks_with_their_authored_content(
         ..task_record("FOO-0001")
     };
     let store = InMemoryStore::default().with_project("foo", vec![record]);
-    let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
+    let clients = SessionPlanningClients::new(
+        AgentStub,
+        ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore::new(None),
+    );
     let planned = plan(&command(None), &store, &pool, &clients).await.unwrap();
     assert!(
         planned
@@ -305,7 +333,11 @@ async fn planning_accepts_unlinked_active_tasks_with_their_authored_content(
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn unknown_project_id_preserves_the_resolution_error(pool: sqlx::SqlitePool) {
-    let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
+    let clients = SessionPlanningClients::new(
+        AgentStub,
+        ExistingProjectDirectory,
+        pwf_infra::user_settings::TomlSettingsStore::new(None),
+    );
     let mut command = command(None);
     command.task_ids = SessionTaskIds::try_new(["XYZ-0001".parse().unwrap()]).unwrap();
     let error = plan_session::execute(

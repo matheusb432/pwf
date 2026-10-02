@@ -1,0 +1,4 @@
+# Save as pwf/titles.toml under your platform configuration directory.
+# On Linux: ~/.config/pwf/titles.toml, or $XDG_CONFIG_HOME/pwf/titles.toml.
+[task]
+separator = " :: " # exact text between task ID and title; " " removes the colons

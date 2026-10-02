@@ -130,6 +130,10 @@ async fn v1_get_user_settings_returns_validated_scoped_colors() -> anyhow::Resul
         server.root.path().join("config.toml"),
         "default_list_page_size = 20\ndatetime_format = \"%Y-%m-%d %H:%M %:z\"\n[colors.task]\nactive = \"#ff8700\"\n[colors.project]\npaused = \"#010203\"\n[colors.note]\nverified = \"#040506\"\n",
     )?;
+    std::fs::write(
+        server.root.path().join("titles.toml"),
+        "[task]\nseparator = \" \"\n",
+    )?;
 
     let response =
         SettingsServiceClient::with_interceptor(server.channel().await?, server::ReleaseRequest)
@@ -143,6 +147,7 @@ async fn v1_get_user_settings_returns_validated_scoped_colors() -> anyhow::Resul
         env!("CARGO_PKG_VERSION")
     );
     let response = response.into_inner();
+    assert_eq!(response.task_title_separator.as_deref(), Some(" "));
     assert_eq!(response.datetime_format, "%Y-%m-%d %H:%M %:z");
     assert_eq!(response.default_list_page_size, 20);
     let colors = response
@@ -202,6 +207,24 @@ async fn v1_get_user_settings_returns_validated_scoped_colors() -> anyhow::Resul
             green: 5,
             blue: 6
         })
+    );
+    server.finish().await
+}
+
+#[tokio::test]
+async fn v1_get_user_settings_rejects_invalid_title_config() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let path = server.root.path().join("titles.toml");
+    std::fs::write(&path, "[task]\nseparator = \"\\n\"\n")?;
+    let status =
+        SettingsServiceClient::with_interceptor(server.channel().await?, server::ReleaseRequest)
+            .get_user_settings(Request::new(pb::GetUserSettingsRequest {}))
+            .await
+            .unwrap_err();
+    assert_eq!(status.code(), Code::FailedPrecondition);
+    assert!(
+        status.message().contains(&*path.to_string_lossy()),
+        "{status}"
     );
     server.finish().await
 }

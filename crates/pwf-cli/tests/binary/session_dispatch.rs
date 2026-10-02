@@ -131,3 +131,47 @@ fn default_dispatch_forwards_the_explicit_model_to_the_concrete_claude_process()
     assert!(entries[8].contains("do the thing"));
     assert!(entries[8].ends_with("\n</pwf_task>"));
 }
+
+#[test]
+fn personal_separator_names_both_agent_sessions() -> anyhow::Result<()> {
+    let fixture = SessionFixture::new()?;
+    fixture.install_claude()?;
+    fixture
+        .database
+        .write_title_config("[task]\nseparator = \" \"\n")?;
+    let claude_log = fixture.directory().join("claude-title.log");
+    fixture
+        .database
+        .command()
+        .args(["session", "foo1", "--agent", "claude", "--yes"])
+        .env("PATH", &fixture.child_path)
+        .env("CLAUDE_STUB_LOG", &claude_log)
+        .assert()
+        .success();
+    let log = fs::read_to_string(claude_log)?;
+    assert!(log.contains("arg=foo1 do the thing\0"), "{log}");
+
+    let codex_log = fixture.directory().join("codex-title.jsonl");
+    fixture
+        .database
+        .command()
+        .args(["session", "foo1", "--agent", "codex", "--yes"])
+        .env("PATH", &fixture.child_path)
+        .env("CODEX_STUB_APP_SERVER_LOG", &codex_log)
+        .env(
+            "CODEX_STUB_RESUME_LOG",
+            fixture.directory().join("codex-title-resume.log"),
+        )
+        .assert()
+        .success();
+    let requests = fs::read_to_string(codex_log)?
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let name = requests
+        .iter()
+        .find(|request| request["method"] == "thread/name/set")
+        .ok_or_else(|| anyhow::anyhow!("no Codex thread naming request"))?;
+    assert_eq!(name["params"]["name"], "foo1 do the thing");
+    Ok(())
+}

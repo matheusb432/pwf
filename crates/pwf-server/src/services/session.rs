@@ -2,7 +2,10 @@ use std::pin::Pin;
 
 use futures::Stream;
 use pwf_application::{
-    ports::{confirmation::ConfirmationClientError, task_vault::TaskMutationError},
+    ports::{
+        confirmation::ConfirmationClientError, task_vault::TaskMutationError,
+        user_settings::UserSettingsLoadError,
+    },
     task::session::{
         dispatch_confirmed_session::{self, DispatchConfirmedSessionError},
         dispatch_session::DispatchSessionError,
@@ -48,7 +51,11 @@ impl pb::session_service_server::SessionService for SessionGrpcService {
         let environment = process_environment(&mut request)?;
         let command = proto::session::plan_session_request(request)?;
         let agent = AgentHarness::new(environment.clone());
-        let clients = SessionPlanningClients::new(agent, self.state.project_directory);
+        let clients = SessionPlanningClients::new(
+            agent,
+            self.state.project_directory,
+            self.state.user_settings.clone(),
+        );
         let planned = plan_session::execute(
             &command,
             &self.state.store,
@@ -100,7 +107,8 @@ impl pb::session_service_server::SessionService for SessionGrpcService {
         let state = self.state.clone();
         let agent = AgentHarness::new(environment.clone());
         tokio::spawn(async move {
-            let clients = SessionPlanningClients::new(agent, state.project_directory);
+            let clients =
+                SessionPlanningClients::new(agent, state.project_directory, state.user_settings);
             let result = dispatch_confirmed_session::execute(
                 &command,
                 &state.store,
@@ -197,6 +205,10 @@ fn task_mutation_status<E: std::fmt::Display>(error: &TaskMutationError<E>) -> S
 fn plan_session_status(error: &PlanSessionError) -> Status {
     let message = error.to_string();
     match error {
+        PlanSessionError::Settings(UserSettingsLoadError::InvalidConfiguration(_)) => {
+            Status::failed_precondition(message)
+        }
+        PlanSessionError::Settings(UserSettingsLoadError::Adapter(_)) => Status::internal(message),
         PlanSessionError::NotLaunchable { .. }
         | PlanSessionError::ProjectSourceMissing { .. }
         | PlanSessionError::ProjectPathMissing { .. }

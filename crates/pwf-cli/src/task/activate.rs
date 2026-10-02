@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_client::{confirmation::ConfirmedRequestError, pb::ActivateTaskStart, task::TaskClient};
-use pwf_models::settings::TaskStatusColors;
+use pwf_models::settings::UserSettings;
 
 use super::Identifier;
 
@@ -22,7 +22,7 @@ use crate::{
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments.identifier.id();
@@ -52,7 +52,7 @@ pub(super) async fn run(
             TaskMutationAction::Activated,
             id.as_ref(),
             result.task.as_ref(),
-            task_status_colors,
+            settings,
             console.color(),
         ),
         Some(pwf_client::pb::activate_task_result::Outcome::AlreadyActive(result)) => {
@@ -60,7 +60,7 @@ pub(super) async fn run(
                 TaskMutationAction::AlreadyActive,
                 id.as_ref(),
                 result.task.as_ref(),
-                task_status_colors,
+                settings,
                 console.color(),
             )
         }

@@ -42,4 +42,6 @@ message GetUserSettingsResponse {
   NoteStatusColors note_status_colors = 5;
   string datetime_format = 6;
   uint64 default_list_page_size = 7;
+  // Exact separator, including spaces. Absence uses " :: "; empty concatenates ID and title.
+  optional string task_title_separator = 8;
 }

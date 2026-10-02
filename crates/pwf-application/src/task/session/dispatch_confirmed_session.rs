@@ -14,6 +14,7 @@ use crate::ports::{
     project_directory::ProjectDirectoryClient,
     project_store::ProjectStore,
     task_vault::{ExpectedTaskRevision, TaskMutationError, TaskVault},
+    user_settings::UserSettingsReader,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -36,7 +37,11 @@ pub async fn execute(
     store: &impl TaskVault,
     project_store: &impl ProjectStore,
     home: &HomeDirectory,
-    clients: &SessionPlanningClients<impl AgentClient, impl ProjectDirectoryClient>,
+    clients: &SessionPlanningClients<
+        impl AgentClient,
+        impl ProjectDirectoryClient,
+        impl UserSettingsReader,
+    >,
     confirmation: &mut dyn ConfirmationClient<Confirmation = PreparedSessionDispatch>,
 ) -> Result<DispatchedSession, DispatchConfirmedSessionError> {
     let prepared = match plan_session::execute(command, store, project_store, home, clients).await?

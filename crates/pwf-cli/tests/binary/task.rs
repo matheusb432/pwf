@@ -884,6 +884,71 @@ fn task_mutations_print_one_summary_line() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn personal_separator_applies_to_task_output_and_reloads_without_changing_authored_titles()
+-> anyhow::Result<()> {
+    let fixture = ManagedProject::new(&project_id("FOO")?, "foo-bar")?;
+    fixture
+        .database
+        .write_title_config("[task]\nseparator = \" \"\n")?;
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo",
+            "keep :: authored / exercise title formatting",
+        ])
+        .assert()
+        .success()
+        .stdout("Added task: FOO-0001 keep :: authored\n");
+    for (args, expected) in [
+        (
+            vec!["task", "list", "--project", "foo"],
+            "FOO-0001 keep :: authored\n",
+        ),
+        (
+            vec!["task", "list", "--project", "foo", "--all"],
+            "FOO-0001 [active] keep :: authored\n",
+        ),
+        (
+            vec!["task", "edit", "foo1", "--title", "keep :: authored"],
+            "Edited task: FOO-0001 keep :: authored\n",
+        ),
+    ] {
+        fixture
+            .database
+            .command()
+            .args(args)
+            .assert()
+            .success()
+            .stdout(expected);
+    }
+    let rich = fixture
+        .database
+        .command_args(&["task", "get", "foo1", "--long=rich"])
+        .success_stdout();
+    assert!(rich.starts_with("FOO-0001 keep :: authored\n\n"), "{rich}");
+    let stored_before = task_json(&fixture.database, &task_id("FOO-0001")?)?;
+    fixture
+        .database
+        .write_title_config("[task]\nseparator = \"\"\n")?;
+    fixture
+        .database
+        .command()
+        .args(["task", "list", "--project", "foo"])
+        .assert()
+        .success()
+        .stdout("FOO-0001keep :: authored\n");
+    assert_eq!(
+        task_json(&fixture.database, &task_id("FOO-0001")?)?,
+        stored_before
+    );
+    Ok(())
+}
+
 #[test]
 #[cfg(unix)]
 fn task_mutations_use_configured_lifecycle_colors() {

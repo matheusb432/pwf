@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_client::{pb, task::TaskClient};
-use pwf_models::settings::TaskStatusColors;
+use pwf_models::settings::UserSettings;
 
 use super::{
     Identifier,
@@ -17,7 +17,7 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments.identifier.id();
@@ -38,7 +38,7 @@ pub(super) async fn run(
         action,
         id.as_ref(),
         task.as_ref(),
-        task_status_colors,
+        settings,
         console.color(),
     )
 }

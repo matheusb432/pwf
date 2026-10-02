@@ -4,7 +4,7 @@ use pwf_client::{
     pb::{DeleteTaskStart, delete_task_result},
     task::TaskClient,
 };
-use pwf_models::settings::TaskStatusColors;
+use pwf_models::settings::UserSettings;
 
 use super::Identifier;
 
@@ -26,7 +26,7 @@ use crate::{
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments.identifier.id();
@@ -51,7 +51,7 @@ pub(super) async fn run(
             TaskMutationAction::Removed,
             id.as_ref(),
             deleted.task.as_ref(),
-            task_status_colors,
+            settings,
             console.color(),
         ),
         Some(delete_task_result::Outcome::Aborted(_)) => {

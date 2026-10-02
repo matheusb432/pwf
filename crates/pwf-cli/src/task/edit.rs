@@ -7,7 +7,7 @@ use pwf_client::{
     task::TaskClient,
 };
 use pwf_models::{
-    settings::TaskStatusColors,
+    settings::UserSettings,
     task::{TagInput, TaskTags, TaskTitle},
 };
 
@@ -147,7 +147,7 @@ impl PriorityEdit {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments.identifier.id();
@@ -180,7 +180,7 @@ pub(super) async fn run(
         TaskMutationAction::Edited,
         id.as_ref(),
         result.task.as_ref(),
-        task_status_colors,
+        settings,
         console.color(),
     )
 }
