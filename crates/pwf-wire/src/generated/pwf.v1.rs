@@ -3751,6 +3751,8 @@ pub enum ListDetail {
     Unspecified = 0,
     Summary = 1,
     Detailed = 2,
+    /// Body and metadata without exact file source or blocker-status enrichment.
+    Preview = 3,
 }
 impl ListDetail {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -3762,6 +3764,7 @@ impl ListDetail {
             Self::Unspecified => "LIST_DETAIL_UNSPECIFIED",
             Self::Summary => "LIST_DETAIL_SUMMARY",
             Self::Detailed => "LIST_DETAIL_DETAILED",
+            Self::Preview => "LIST_DETAIL_PREVIEW",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -3770,6 +3773,7 @@ impl ListDetail {
             "LIST_DETAIL_UNSPECIFIED" => Some(Self::Unspecified),
             "LIST_DETAIL_SUMMARY" => Some(Self::Summary),
             "LIST_DETAIL_DETAILED" => Some(Self::Detailed),
+            "LIST_DETAIL_PREVIEW" => Some(Self::Preview),
             _ => None,
         }
     }

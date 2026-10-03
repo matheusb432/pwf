@@ -149,7 +149,7 @@ async fn perform_work(work: Work, id: u64, events: mpsc::Sender<WorkerEvent>) ->
         Work::NewTask(project) => Ok(Outcome::Draft(task_template(&client, project).await?)),
         Work::Action { id, action } => task_action(&client, id, action, prompt).await,
         Work::Blockers { exclude } => {
-            let tasks = list_tasks(&client, None, false).await?;
+            let tasks = list_tasks(&client, None, false, Ok).await?;
             let mut blockers = Vec::new();
             for task in tasks {
                 let id = TaskId::try_new(task.id)?;

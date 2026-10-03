@@ -26,16 +26,14 @@ pub(super) fn snapshot() -> Snapshot {
         "/tasks/PWF-0007.md".into(),
     );
     task.status = Some(TaskStatus::Active);
-    task.body = "## Goals\nSearch saved Markdown\n".into();
-    task.index();
+    task.set_body("## Goals\nSearch saved Markdown\n".into());
     let mut note = Record::new(
         RecordId::Note(NoteId::try_new("PWF-NOTE-0001").unwrap()),
         project.clone(),
         "Keyboard notes".into(),
         "/tasks/PWF-NOTE-0001.md".into(),
     );
-    note.body = "# Keyboard notes\nSearch saved Markdown and draft recovery".into();
-    note.index();
+    note.set_body("# Keyboard notes\nSearch saved Markdown and draft recovery".into());
     Snapshot {
         project: None,
         projects: vec![Project {

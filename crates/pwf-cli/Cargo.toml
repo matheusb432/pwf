@@ -55,7 +55,7 @@ criterion = { workspace = true }
 tempfile = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-expectrl = { workspace = true }
+expectrl = { workspace = true, features = ["close-range"] }
 vt100 = "0.16.2"
 
 [target.'cfg(windows)'.dependencies]

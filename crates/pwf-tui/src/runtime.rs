@@ -16,6 +16,7 @@ use ratatui::{DefaultTerminal, backend::CrosstermBackend};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
+    time::{Instant, MissedTickBehavior},
 };
 
 use crate::{
@@ -135,22 +136,39 @@ pub(super) async fn run(project: Option<ProjectId>) -> Result<()> {
     };
     runtime.apply(Some(runtime.app.load())).await?;
     let mut tick = tokio::time::interval(Duration::from_millis(120));
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let frame_interval = Duration::from_nanos(1_000_000_000 / 60);
+    let mut frame_next = Instant::now();
+    let mut redraw = true;
     loop {
-        runtime.terminal.draw(&mut runtime.app)?;
+        if redraw && Instant::now() >= frame_next {
+            runtime.terminal.draw(&mut runtime.app)?;
+            frame_next = Instant::now() + frame_interval;
+            redraw = false;
+        }
         let input = runtime
             .input
             .as_mut()
             .ok_or_else(|| anyhow!("Terminal input is suspended."))?;
         let effect = tokio::select! {
             event = input.next() => match event {
-                Some(Ok(Event::Key(key))) => runtime.app.handle_key(key),
-                Some(Ok(Event::Paste(text))) => { runtime.app.paste(&text); None }
+                Some(Ok(Event::Key(key))) => {
+                    redraw |= key.kind != crossterm::event::KeyEventKind::Release;
+                    runtime.app.handle_key(key)
+                },
+                Some(Ok(Event::Paste(text))) => { runtime.app.paste(&text); redraw = true; None }
+                Some(Ok(Event::Resize(..) | Event::FocusGained)) => { redraw = true; None }
                 Some(Ok(_)) => None,
                 Some(Err(error)) => return Err(error.into()),
                 None => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Terminal input closed.").into()),
             },
-            event = incoming.recv() => runtime.worker_event(event),
-            _ = tick.tick() => { runtime.app.tick = runtime.app.tick.wrapping_add(1); None },
+            event = incoming.recv() => { redraw = true; runtime.worker_event(event) },
+            _ = tick.tick(), if runtime.app.pending.is_some() => {
+                runtime.app.tick = runtime.app.tick.wrapping_add(1);
+                redraw = true;
+                None
+            },
+            () = tokio::time::sleep_until(frame_next), if redraw => continue,
         };
         if runtime.apply(effect).await? {
             return Ok(());

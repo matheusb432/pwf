@@ -355,6 +355,7 @@ pub fn list_tasks_response(tasks: task::ListedTasks) -> pb::ListTasksResponse {
     let detail = match tasks.detail {
         task::ListDetail::Summary => pb::ListDetail::Summary,
         task::ListDetail::Detailed => pb::ListDetail::Detailed,
+        task::ListDetail::Preview => pb::ListDetail::Preview,
     };
     pb::ListTasksResponse {
         tasks: tasks.tasks.into_iter().map(listed_task).collect(),
@@ -465,7 +466,7 @@ fn listed_task(task: task::ListedTask) -> pb::ListedTask {
         ..Default::default()
     };
     if let Some(details) = task.details {
-        view.source = Some(details.source);
+        view.source = details.source;
         view.created_at = details.created_at.map(|value| value.to_string());
         view.completed_at = details.completed_at.map(|value| value.to_string());
         view.commits = details.commits;

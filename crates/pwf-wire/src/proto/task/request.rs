@@ -224,6 +224,7 @@ pub fn list_tasks_request(request: pb::ListTasksRequest) -> Result<task::ListTas
     let detail = match pb::ListDetail::try_from(request.detail).ok() {
         Some(pb::ListDetail::Summary) => task::ListDetail::Summary,
         Some(pb::ListDetail::Detailed) => task::ListDetail::Detailed,
+        Some(pb::ListDetail::Preview) => task::ListDetail::Preview,
         Some(pb::ListDetail::Unspecified) | None => {
             return Err(invalid("detail", "must be specified"));
         }

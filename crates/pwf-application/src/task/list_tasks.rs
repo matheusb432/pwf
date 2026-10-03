@@ -496,6 +496,7 @@ fn list_detail_name(detail: ListDetail) -> &'static str {
     match detail {
         ListDetail::Summary => "summary",
         ListDetail::Detailed => "detailed",
+        ListDetail::Preview => "preview",
     }
 }
 
@@ -542,15 +543,17 @@ fn collect_project_tasks(
         .into_iter()
         .filter(|record| query.status_filter.includes(record.status))
         .map(|record| {
-            task_projection::detailed(
-                &record,
-                project.title.clone(),
-                project
-                    .source
-                    .as_ref()
-                    .map(pwf_models::project::ProjectSource::value),
-            )
-            .map_err(|error| ListTasksError::InvalidTaskProjection(anyhow::Error::new(error)))
+            let project_path = project
+                .source
+                .as_ref()
+                .map(pwf_models::project::ProjectSource::value);
+            let projected = if query.detail == ListDetail::Preview {
+                task_projection::preview(&record, project.title.clone(), project_path)
+            } else {
+                task_projection::detailed(&record, project.title.clone(), project_path)
+            };
+            projected
+                .map_err(|error| ListTasksError::InvalidTaskProjection(anyhow::Error::new(error)))
         })
         .collect()
 }

@@ -357,9 +357,10 @@ impl App {
                 self.toggle_search_mode();
             }
             _ => {
-                text_input::input_key(&mut self.browser.query, key, false, QUERY_BYTES_MAX);
-                self.browser.selected = 0;
-                self.browser.refilter();
+                if text_input::input_key(&mut self.browser.query, key, false, QUERY_BYTES_MAX) {
+                    self.browser.selected = 0;
+                    self.browser.refilter();
+                }
             }
         }
         None
@@ -795,6 +796,37 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn search_cursor_moves_keep_selection_and_preview_until_the_query_changes() {
+        let mut app = app();
+        app.handle_key(key(KeyCode::Char('f')));
+        app.handle_key(key(KeyCode::Char('/')));
+        app.paste("saved");
+        app.handle_key(key(KeyCode::Down));
+        let scroll = app.browser.preview_scroll;
+        for input in [
+            key(KeyCode::Home),
+            key(KeyCode::End),
+            key(KeyCode::Left),
+            key(KeyCode::Right),
+            key(KeyCode::Delete),
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+            key(KeyCode::F(12)),
+        ] {
+            app.handle_key(input);
+            assert_eq!(app.browser.query.lines(), ["saved"]);
+            assert_eq!(app.browser.selected, 1, "{input:?}");
+            assert_eq!(app.browser.preview_scroll, scroll, "{input:?}");
+        }
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.browser.visible, Vec::<usize>::new());
+        app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(app.browser.visible.len(), 2);
+        assert_eq!(app.browser.selected, 0);
     }
 
     #[test]

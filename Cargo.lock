@@ -2667,6 +2667,7 @@ dependencies = [
 name = "pwf-tui"
 version = "0.3.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "base64 0.22.1",
  "clap",

@@ -57,6 +57,23 @@ pub(in crate::task) fn detailed(
     project: ProjectName,
     project_path: Option<&ProjectSourceValue>,
 ) -> Result<ListedTask, TaskProjectionError> {
+    project_list_entry(task, project, project_path, Some(task.source.clone()))
+}
+
+pub(in crate::task) fn preview(
+    task: &TaskRecord,
+    project: ProjectName,
+    project_path: Option<&ProjectSourceValue>,
+) -> Result<ListedTask, TaskProjectionError> {
+    project_list_entry(task, project, project_path, None)
+}
+
+fn project_list_entry(
+    task: &TaskRecord,
+    project: ProjectName,
+    project_path: Option<&ProjectSourceValue>,
+    source: Option<String>,
+) -> Result<ListedTask, TaskProjectionError> {
     let body = TaskBody::new(&task.body);
     let flags = derive_flags(&body);
     let heading = task_heading(&task.id, &task.title)?;
@@ -84,7 +101,7 @@ pub(in crate::task) fn detailed(
         tags: task.tags.clone(),
         created: task.created_at.map(TaskTimestamp::date),
         details: Some(ListedTaskDetails {
-            source: task.source.clone(),
+            source,
             created_at: task.created_at,
             completed_at: task.completed_at,
             commits: task.commits.clone(),

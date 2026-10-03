@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     app::{App, Dialog, ProjectPurpose},
-    browser::{Record, SearchMode},
+    browser::Record,
     draft::{DraftKind, FieldKind, TaskAction},
 };
 
@@ -196,25 +196,29 @@ fn render_stack(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-fn render_records(frame: &mut Frame, area: Rect, app: &App) {
-    let query = app.browser.query.lines().join(" ");
+fn render_records(frame: &mut Frame, area: Rect, app: &mut App) {
     let start = app
         .browser
         .selected
         .saturating_sub(usize::from(area.height) / 2);
-    let rows = app
+    let indices = app
         .browser
         .visible
         .iter()
         .skip(start)
         .take(usize::from(area.height))
+        .copied()
+        .collect::<Vec<_>>();
+    let rows = indices
+        .into_iter()
         .map(|index| {
-            let record = &app.browser.records[*index];
+            let matched_line = app.browser.content_match_line(index);
+            let record = &app.browser.records[index];
             let marked = record
                 .id
                 .task()
                 .is_some_and(|id| app.browser.references.contains(id));
-            record_row(record, &query, app.browser.search_mode, marked)
+            record_row(record, matched_line, marked)
         })
         .collect::<Vec<_>>();
     if rows.is_empty() {
@@ -236,16 +240,15 @@ fn render_records(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-fn record_row(record: &Record, query: &str, mode: SearchMode, marked: bool) -> ListItem<'static> {
+fn record_row(record: &Record, matched_line: Option<usize>, marked: bool) -> ListItem<'static> {
     let line = Line::from(vec![
         (if marked { "[x] " } else { "    " }).fg(if marked { COLOR_ACTIVE } else { COLOR_MUTED }),
         format!("{:<9} ", record.id.as_str()).fg(record_color(record)),
         Span::raw(clean(&record.title)),
     ]);
-    if mode != SearchMode::Contents || query.is_empty() {
-        return ListItem::new(line);
-    }
-    let Some((number, text)) = record.content_match(query) else {
+    let Some((number, text)) = matched_line
+        .and_then(|number| record.body().lines().nth(number).map(|text| (number, text)))
+    else {
         return ListItem::new(line);
     };
     ListItem::new(vec![
@@ -292,28 +295,36 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
         .diagnostic
         .as_ref()
         .map(|text| Line::from(clean(text)).fg(COLOR_BADGE));
-    let body = record.body.lines().map(|line| {
-        let text = clean(
-            &line
-                .chars()
-                .take(usize::from(inner.width) * 4)
-                .collect::<String>(),
-        );
-        if line.starts_with('#') {
-            Line::from(text).fg(COLOR_ACTIVE).bold()
-        } else if line.starts_with("- ") || line.starts_with("* ") {
-            Line::from(text).fg(COLOR_STATUS)
-        } else {
-            Line::from(text)
-        }
-    });
+    let body = record
+        .body()
+        .lines()
+        .skip(
+            app.browser
+                .preview_scroll
+                .saturating_sub(record.preview_header_lines()),
+        )
+        .map(|line| {
+            let text = clean(
+                &line
+                    .chars()
+                    .take(usize::from(inner.width) * 4)
+                    .collect::<String>(),
+            );
+            if line.starts_with('#') {
+                Line::from(text).fg(COLOR_ACTIVE).bold()
+            } else if line.starts_with("- ") || line.starts_with("* ") {
+                Line::from(text).fg(COLOR_STATUS)
+            } else {
+                Line::from(text)
+            }
+        });
     let lines = header
         .into_iter()
         .chain(metadata)
         .chain(diagnostic)
         .chain([Line::from("")])
-        .chain(body)
         .skip(app.browser.preview_scroll)
+        .chain(body)
         .take(usize::from(inner.height))
         .collect::<Vec<_>>();
     frame.render_widget(
@@ -638,6 +649,45 @@ mod tests {
 
     use super::*;
     use crate::test_support::app;
+
+    #[test]
+    fn preview_scroll_preserves_header_body_styles_and_search_position() {
+        for (width, height) in [(70, 12), (24, 6)] {
+            let mut app = app();
+            app.browser.records[0].metadata = vec![("Project".into(), "PWF".into())];
+            app.browser.records[0].diagnostic = Some("preview warning".into());
+            app.browser.records[0].set_body("## Heading\n- bullet\nplain\ttext\nlast".into());
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            for (scroll, expected, color) in [
+                (3, "Project     PWF", COLOR_LABEL),
+                (4, "preview warning", COLOR_BADGE),
+                (5, "", Color::Reset),
+                (6, "## Heading", COLOR_ACTIVE),
+                (7, "- bullet", COLOR_STATUS),
+                (8, "plain text", Color::Reset),
+                (9, "last", Color::Reset),
+                (10, "", Color::Reset),
+            ] {
+                app.browser.preview_scroll = scroll;
+                terminal
+                    .draw(|frame| render_preview(frame, frame.area(), &app))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let row = (1..width - 1)
+                    .map(|x| buffer[(x, 1)].symbol())
+                    .collect::<String>();
+                assert_eq!(row.trim_end(), expected, "scroll {scroll}");
+                assert_eq!(buffer[(1, 1)].fg, color, "scroll {scroll}");
+            }
+            app.browser.search_mode = crate::browser::SearchMode::Contents;
+            app.browser.query = ratatui_textarea::TextArea::from(["Heading"]);
+            app.browser.refilter();
+            terminal
+                .draw(|frame| render_preview(frame, frame.area(), &app))
+                .unwrap();
+            assert_eq!(terminal.backend().buffer()[(1, 1)].symbol(), "#");
+        }
+    }
 
     #[test]
     fn baseline_panels_and_focus_render_at_wide_and_narrow_sizes() {

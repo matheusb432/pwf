@@ -1,5 +1,6 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
+use aho_corasick::AhoCorasick;
 use pwf_models::{
     note::NoteId,
     project::ProjectId,
@@ -65,21 +66,29 @@ pub(super) struct Record {
     pub title: String,
     pub status: Option<TaskStatus>,
     pub verified: bool,
-    pub body: String,
+    body: String,
     pub path: PathBuf,
     pub metadata: Vec<(String, String)>,
     pub diagnostic: Option<String>,
     id_folded: String,
-    body_folded: String,
+    body_unicode_folds_to_ascii: bool,
 }
 
 impl Record {
-    pub fn index(&mut self) {
-        self.id_folded = self.id.as_str().to_ascii_lowercase();
-        self.body_folded = self.body.to_lowercase();
+    pub fn set_body(&mut self, body: String) {
+        self.body = body;
+        self.body_unicode_folds_to_ascii = !self.body.is_ascii()
+            && self.body.chars().any(|character| {
+                !character.is_ascii() && character.to_lowercase().any(|folded| folded.is_ascii())
+            });
+    }
+
+    pub fn body(&self) -> &str {
+        &self.body
     }
 
     pub fn new(id: RecordId, project: ProjectId, title: String, path: PathBuf) -> Self {
+        let id_folded = id.as_str().to_ascii_lowercase();
         Self {
             id,
             project,
@@ -90,13 +99,13 @@ impl Record {
             path,
             metadata: Vec::new(),
             diagnostic: None,
-            id_folded: String::new(),
-            body_folded: String::new(),
+            id_folded,
+            body_unicode_folds_to_ascii: false,
         }
     }
 
     pub fn bytes(&self) -> usize {
-        self.body.len() + self.body_folded.len() + self.id_folded.len() + self.title.len()
+        self.body.len() + self.id_folded.len() + self.title.len()
     }
 
     pub fn status_label(&self) -> &'static str {
@@ -110,18 +119,83 @@ impl Record {
         }
     }
 
-    pub fn content_match(&self, query: &str) -> Option<(usize, &str)> {
+    pub fn preview_header_lines(&self) -> usize {
+        4 + self.metadata.len() + usize::from(self.diagnostic.is_some())
+    }
+}
+
+struct ContentQuery {
+    text: String,
+    sensitive: bool,
+    matcher: Option<AhoCorasick>,
+}
+
+impl ContentQuery {
+    fn new(query: &str) -> Self {
         let sensitive = query.chars().any(char::is_uppercase);
-        let folded = query.to_lowercase();
-        self.body.lines().enumerate().find(|(_, line)| {
-            (sensitive && line.contains(query))
-                || (!sensitive && line.to_lowercase().contains(&folded))
-        })
+        let text = if sensitive {
+            query.to_string()
+        } else {
+            query.to_lowercase()
+        };
+        let matcher = (!sensitive)
+            .then(|| {
+                AhoCorasick::builder()
+                    .ascii_case_insensitive(true)
+                    .build([&text])
+                    .ok()
+            })
+            .flatten();
+        Self {
+            text,
+            sensitive,
+            matcher,
+        }
     }
 
-    pub fn preview_header_lines(&self) -> usize {
-        5 + self.metadata.len() + usize::from(self.diagnostic.is_some())
+    fn matches(&self, text: &str, unicode_folds_to_ascii: bool) -> bool {
+        if self.sensitive {
+            return text.contains(&self.text);
+        }
+        if let Some(matcher) = &self.matcher {
+            if matcher.is_match(text) {
+                return true;
+            }
+            if self.text.is_ascii() && !unicode_folds_to_ascii {
+                return false;
+            }
+        }
+        text.to_lowercase().contains(&self.text)
     }
+
+    fn first_match_line(&self, text: &str, unicode_folds_to_ascii: bool) -> Option<usize> {
+        if self.text.contains(['\r', '\n']) {
+            return text
+                .lines()
+                .position(|line| self.matches(line, unicode_folds_to_ascii));
+        }
+        let folded;
+        let (text, offset) = if self.sensitive {
+            (text, text.find(&self.text))
+        } else if self.text.is_ascii()
+            && !unicode_folds_to_ascii
+            && let Some(matcher) = &self.matcher
+        {
+            (text, matcher.find(text).map(|matched| matched.start()))
+        } else {
+            folded = text.to_lowercase();
+            let offset = folded.find(&self.text);
+            (folded.as_str(), offset)
+        };
+        offset.map(|offset| text[..offset].matches('\n').count())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ContentMatch {
+    Unchecked,
+    Missing,
+    Line(usize),
 }
 
 pub(super) struct Snapshot {
@@ -236,6 +310,8 @@ pub(super) struct Browser {
     pub selected: usize,
     pub preview_scroll: usize,
     pub references: BTreeSet<TaskId>,
+    content_query: Option<ContentQuery>,
+    content_matches: Vec<ContentMatch>,
 }
 
 impl Browser {
@@ -253,6 +329,8 @@ impl Browser {
             selected: 0,
             preview_scroll: 0,
             references: BTreeSet::new(),
+            content_query: None,
+            content_matches: Vec::new(),
         }
     }
 
@@ -276,8 +354,12 @@ impl Browser {
     pub fn refilter(&mut self) {
         let query = self.query.lines().join("\n");
         let folded = query.to_lowercase();
-        let case_sensitive = query.chars().any(char::is_uppercase);
         let task_id = query.parse::<TaskId>().ok();
+        self.content_query = (self.search_mode == SearchMode::Contents && !query.is_empty())
+            .then(|| ContentQuery::new(&query));
+        self.content_matches.clear();
+        self.content_matches
+            .resize(self.records.len(), ContentMatch::Unchecked);
         self.visible = self
             .records
             .iter()
@@ -297,8 +379,9 @@ impl Browser {
                                     .bytes()
                                     .all(|character| candidate.any(|next| next == character))
                         }
-                        SearchMode::Contents if case_sensitive => record.body.contains(&query),
-                        SearchMode::Contents => record.body_folded.contains(&folded),
+                        SearchMode::Contents => self.content_query.as_ref().is_none_or(|query| {
+                            query.matches(&record.body, record.body_unicode_folds_to_ascii)
+                        }),
                     }
             })
             .map(|(index, _)| index)
@@ -319,6 +402,20 @@ impl Browser {
             .map(|index| &self.records[*index])
     }
 
+    pub fn content_match_line(&mut self, index: usize) -> Option<usize> {
+        let query = self.content_query.as_ref()?;
+        if matches!(self.content_matches[index], ContentMatch::Unchecked) {
+            let record = &self.records[index];
+            self.content_matches[index] = query
+                .first_match_line(&record.body, record.body_unicode_folds_to_ascii)
+                .map_or(ContentMatch::Missing, ContentMatch::Line);
+        }
+        match self.content_matches[index] {
+            ContentMatch::Line(line) => Some(line),
+            ContentMatch::Missing | ContentMatch::Unchecked => None,
+        }
+    }
+
     pub fn move_selection(&mut self, delta: isize) {
         self.selected = self
             .selected
@@ -329,16 +426,10 @@ impl Browser {
 
     fn reset_preview(&mut self) {
         self.preview_scroll = 0;
-        let query = self.query.lines().join(" ");
-        if self.search_mode == SearchMode::Contents && !query.is_empty() {
-            self.preview_scroll = self
-                .current()
-                .and_then(|record| {
-                    record
-                        .content_match(&query)
-                        .map(|(line, _)| record.preview_header_lines() + line)
-                })
-                .unwrap_or(0);
+        if let Some(index) = self.visible.get(self.selected).copied()
+            && let Some(line) = self.content_match_line(index)
+        {
+            self.preview_scroll = self.records[index].preview_header_lines() + line;
         }
     }
 
@@ -390,17 +481,15 @@ mod tests {
                 PathBuf::from(format!("/tasks/{id}.md")),
             );
             record.status = Some(TaskStatus::Active);
-            record.body = "alp1 body-only-needle".into();
-            record.index();
+            record.set_body("alp1 body-only-needle".into());
             browser.records.push(record);
         }
-        let mut note = Record::new(
+        let note = Record::new(
             RecordId::Note(NoteId::try_new("ALP-NOTE-0001").unwrap()),
             "ALP".parse().unwrap(),
             "alp1 note title".into(),
             "/tasks/ALP-NOTE-0001.md".into(),
         );
-        note.index();
         browser.records.push(note);
 
         for query in ["alp1", "AlP1", "alp-1", "alp0001", "ALP-0001", " alp1 "] {
@@ -447,6 +536,104 @@ mod tests {
         browser.query = TextArea::from(["saved MARKDOWN"]);
         browser.refilter();
         assert_eq!(browser.visible, Vec::<usize>::new());
+    }
+
+    #[test]
+    fn contents_search_preserves_unicode_lowercasing_and_smart_case() {
+        let bodies = [
+            "An ASCII Needle\nnext line",
+            "İstanbul and \u{212a}elvin\r\nAÇÃO",
+            "İ",
+            "\u{212a}",
+            "İ first\nistanbul later",
+            "\u{212a}elvin first\nkelvin later",
+            "AÇÃO first\nação later",
+            "ΟΣ",
+            "ΟΣΑ",
+            "ΟΣ ΟΣΑ οσ ος\nΣ",
+            "conteúdo útil\nUppercase Title",
+            "first\r\nneedle\r\nlast\r",
+        ];
+        let queries = [
+            "needle",
+            "Needle",
+            "NEEDLE",
+            "i",
+            "i\u{307}",
+            "istanbul",
+            "kelvin",
+            "ação",
+            "AÇÃO",
+            "οσ",
+            "ος",
+            "σ",
+            "conteúdo",
+            "CONTEÚDO",
+            "absent",
+            "needle\nnext",
+            "needle\r",
+        ];
+        for body in bodies {
+            let mut saved = snapshot();
+            saved.records.truncate(1);
+            saved.records[0].set_body(body.into());
+            let mut browser = Browser::new(ProjectScope::All);
+            browser.replace(saved);
+            browser.search_mode = SearchMode::Contents;
+            for query in queries {
+                browser.query = TextArea::from(query.split('\n'));
+                browser.refilter();
+                let matches = |text: &str| contents_match_reference(text, query);
+                assert_eq!(
+                    !browser.visible.is_empty(),
+                    matches(body),
+                    "{body:?} / {query:?}"
+                );
+                assert_eq!(
+                    browser.content_match_line(0),
+                    body.lines().position(matches),
+                    "snippet {body:?} / {query:?}"
+                );
+            }
+        }
+    }
+
+    fn contents_match_reference(text: &str, query: &str) -> bool {
+        if query.chars().any(char::is_uppercase) {
+            text.contains(query)
+        } else {
+            text.to_lowercase().contains(&query.to_lowercase())
+        }
+    }
+
+    #[test]
+    fn contents_snippets_follow_query_changes_and_refreshed_bodies() {
+        let mut browser = Browser::new(ProjectScope::All);
+        let mut saved = snapshot();
+        saved.records[0].set_body("first needle\nsecond marker".into());
+        browser.replace(saved);
+        browser.search_mode = SearchMode::Contents;
+        for (query, line) in [("needle", 0), ("marker", 1)] {
+            browser.query = TextArea::from([query]);
+            browser.refilter();
+            assert_eq!(browser.content_match_line(0), Some(line));
+            browser.move_selection(0);
+            assert_eq!(
+                browser.preview_scroll,
+                browser.records[0].preview_header_lines() + line
+            );
+        }
+        let mut saved = snapshot();
+        saved.records[0].set_body("changed first line\nchanged second line\nmarker".into());
+        browser.replace(saved);
+        assert_eq!(browser.content_match_line(0), Some(2));
+        assert_eq!(
+            browser.preview_scroll,
+            browser.records[0].preview_header_lines() + 2
+        );
+        browser.search_mode = SearchMode::Ids;
+        browser.refilter();
+        assert_eq!(browser.content_match_line(0), None);
     }
 
     #[test]

@@ -191,6 +191,8 @@ enum ListDetail {
   LIST_DETAIL_UNSPECIFIED = 0;
   LIST_DETAIL_SUMMARY = 1;
   LIST_DETAIL_DETAILED = 2;
+  // Body and metadata without exact file source or blocker-status enrichment.
+  LIST_DETAIL_PREVIEW = 3;
 }
 
 enum TaskStatusFilter {

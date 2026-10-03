@@ -69,6 +69,7 @@ mod terminal {
     struct Terminal {
         session: OsSession,
         parser: vt100::Parser,
+        bytes_read: usize,
     }
 
     impl Terminal {
@@ -80,6 +81,7 @@ mod terminal {
             Self {
                 session,
                 parser: vt100::Parser::new(40, 140, 0),
+                bytes_read: 0,
             }
         }
 
@@ -106,13 +108,52 @@ mod terminal {
             for _ in 0..256 {
                 match self.session.try_read(&mut bytes) {
                     Ok(0) => anyhow::bail!("Terminal closed: {}", self.parser.screen().contents()),
-                    Ok(count) => self.parser.process(&bytes[..count]),
+                    Ok(count) => self.process_bytes(&bytes[..count]),
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
                     Err(error) => return Err(error.into()),
                 }
             }
             Ok(())
         }
+
+        fn process_bytes(&mut self, bytes: &[u8]) {
+            self.bytes_read += bytes.len();
+            self.parser.process(bytes);
+        }
+    }
+
+    #[test]
+    fn idle_terminal_stays_quiet_and_resizing_redraws_the_current_screen() {
+        let fixture = Fixture::new();
+        let mut terminal = fixture.spawn(None);
+        std::thread::sleep(Duration::from_millis(150));
+        terminal.read_available().unwrap();
+        let bytes = terminal.bytes_read;
+        std::thread::sleep(Duration::from_millis(360));
+        terminal.read_available().unwrap();
+        assert_eq!(terminal.bytes_read, bytes, "An idle TUI must not redraw.");
+        terminal
+            .session
+            .get_process_mut()
+            .set_window_size(60, 30)
+            .unwrap();
+        terminal.parser.screen_mut().set_size(30, 60);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while terminal.bytes_read == bytes && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+            terminal.read_available().unwrap();
+        }
+        assert!(
+            terminal.bytes_read > bytes,
+            "Resize must repaint the screen."
+        );
+        terminal.expect("PWF · Stack");
+        terminal.expect("FOO-0001");
+        terminal.send("?");
+        terminal.expect("Keyboard");
+        terminal.send("\x1b");
+        terminal.expect("enter actions");
+        quit(&mut terminal);
     }
 
     fn quit(terminal: &mut Terminal) {
@@ -236,6 +277,7 @@ mod terminal {
         session.expect("Edited input retained");
         session.send("\x13");
         session.expect("Created FOO-0002");
+        session.expect("2 visible / 2 loaded");
         let task = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
         let body = task["body"].as_str().unwrap();
         assert!(body.contains("### Terminal goals"));
@@ -244,6 +286,7 @@ mod terminal {
         session.expect("Complete FOO-0002");
         session.send("Verified terminal workflow\tbase..tip\x13");
         session.expect("Completed FOO-0002");
+        session.expect("0 visible / 2 loaded");
         let task = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
         assert_eq!(task["status"], "done");
         assert!(

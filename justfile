@@ -149,6 +149,11 @@ bench benchmark="all" case="" update="--baseline local" quick="":
 bench-dag-render update="--baseline local" quick="":
     CRITERION_HOME="{{ justfile_directory() }}/.artifacts/benchmarks/criterion" cargo bench --locked -p pwf-cli --bench dag_render -- {{ update }} {{ quick }}
 
+# Compare release TUI CPU and RSS through a Linux PTY against the local baseline.
+[group('performance')]
+bench-tui *args: build
+    cargo run --quiet --locked --release -p pwf-cli --example tui_benchmark -- {{ args }}
+
 # Compare deterministic allocation reports against their local baselines.
 [arg("update", long="update", value="--update", help="Compare and replace the local baselines")]
 [group('performance')]

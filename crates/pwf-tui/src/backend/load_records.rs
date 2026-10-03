@@ -68,17 +68,14 @@ pub(super) async fn load(
             "No active project {id}."
         );
     }
-    let tasks = list_tasks(client, scope.as_ref(), true).await?;
-    let mut records = Vec::new();
+    let mut records = list_tasks(client, scope.as_ref(), true, task_record).await?;
     let mut bytes = 0;
-    for task in tasks {
-        let record = task_record(task)?;
+    for record in &records {
         bytes += record.bytes();
         ensure!(
             bytes <= SNAPSHOT_BYTES_MAX,
             "Saved content exceeds 64 MiB; select a project before refreshing."
         );
-        records.push(record);
     }
     let mut notes = Vec::new();
     for project in &projects {
@@ -149,11 +146,12 @@ fn infer_project(projects: &[pb::Project], directory: &Path) -> Result<Option<Pr
     Ok(closest)
 }
 
-pub(super) async fn list_tasks(
+pub(super) async fn list_tasks<T>(
     client: &PwfClient,
     project: Option<&ProjectId>,
     detailed: bool,
-) -> Result<Vec<pb::ListedTask>> {
+    mut convert: impl FnMut(pb::ListedTask) -> Result<T>,
+) -> Result<Vec<T>> {
     let mut tasks = Vec::new();
     let mut bytes = 0;
     let mut page_token = None;
@@ -165,7 +163,7 @@ pub(super) async fn list_tasks(
                 all: true,
                 status: Some(pb::TaskStatusFilter::All as i32),
                 detail: if detailed {
-                    pb::ListDetail::Detailed
+                    pb::ListDetail::Preview
                 } else {
                     pb::ListDetail::Summary
                 } as i32,
@@ -183,7 +181,7 @@ pub(super) async fn list_tasks(
                 bytes <= SNAPSHOT_BYTES_MAX,
                 "Task data exceeds 64 MiB; select a project before refreshing."
             );
-            tasks.push(task);
+            tasks.push(convert(task)?);
         }
         ensure!(
             tasks.len() <= RECORDS_MAX,
@@ -201,14 +199,13 @@ fn read_notes(mut notes: Vec<Record>, mut bytes: usize) -> Result<(Vec<Record>, 
     let mut warnings = Vec::new();
     for record in &mut notes {
         match read_note(&record.path) {
-            Ok(body) => record.body = body,
+            Ok(body) => record.set_body(body),
             Err(error) => {
                 let diagnostic = format!("Cannot preview {}: {error:#}", record.path.display());
                 warnings.push(diagnostic.clone());
                 record.diagnostic = Some(diagnostic);
             }
         }
-        record.index();
         bytes += record.bytes();
         ensure!(
             bytes <= SNAPSHOT_BYTES_MAX,
@@ -270,7 +267,7 @@ fn task_record(task: pb::ListedTask) -> Result<Record> {
         task.file_path.into(),
     );
     record.status = Some(task_status(task.status)?);
-    record.body = task.body;
+    record.set_body(task.body);
     let mut metadata = vec![("Project".to_string(), task.project)];
     for (label, value) in [
         ("Tags", task.raw_tags),
@@ -306,7 +303,6 @@ fn task_record(task: pb::ListedTask) -> Result<Record> {
         metadata.push(("Blocked by".into(), task.blocked_by.join(", ")));
     }
     record.metadata = metadata;
-    record.index();
     Ok(record)
 }
 

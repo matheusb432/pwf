@@ -170,7 +170,7 @@ fn task_bytes(task: &ListedTask) -> usize {
 }
 
 fn details_bytes(task: &pwf_wire::task::ListedTaskDetails) -> usize {
-    let fields_bytes = task.source.len()
+    let fields_bytes = task.source.as_ref().map_or(0, String::len)
         + task.commits.as_ref().map_or(0, String::len)
         + task.body.as_ref().len()
         + task

@@ -6,12 +6,12 @@ pub(super) fn input_key(
     key: KeyEvent,
     multiline: bool,
     bytes_max: usize,
-) {
+) -> bool {
     let newline = key.code == KeyCode::Enter
         || (key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('j' | 'm')));
     if newline && !multiline {
-        return;
+        return false;
     }
     let inserted_bytes = match key.code {
         _ if newline => 1,
@@ -25,12 +25,16 @@ pub(super) fn input_key(
         _ => 0,
     };
     if inserted_bytes > 0 && bytes(input) + inserted_bytes > bytes_max {
-        return;
+        return false;
     }
-    input.input(key);
+    if !input.input(key) {
+        return false;
+    }
     if bytes(input) > bytes_max {
         input.undo();
+        return false;
     }
+    true
 }
 
 pub(super) fn paste(input: &mut TextArea<'_>, text: &str, multiline: bool, bytes_max: usize) {

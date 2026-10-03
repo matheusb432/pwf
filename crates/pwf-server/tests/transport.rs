@@ -1295,6 +1295,59 @@ async fn task_list_summary_omits_detailed_payload() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn task_list_preview_preserves_paginated_contents_without_duplicate_source()
+-> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let blocker = server.add_project_and_task().await?;
+    server
+        .client
+        .task()
+        .create_task(pb::CreateTaskRequest {
+            project_id: "FOO".into(),
+            shorthand: "Preview target /g Preserve the body and metadata".into(),
+            blocked_by: vec![blocker],
+            ..Default::default()
+        })
+        .await?;
+    let mut client =
+        TaskServiceClient::with_interceptor(server.channel().await?, server::ReleaseRequest);
+    let mut request = task_list_request(None, None);
+    request.page_size = 1;
+    let detailed = client.list_tasks(request.clone()).await?.into_inner();
+    assert!(
+        detailed.tasks[0]
+            .source
+            .as_ref()
+            .is_some_and(|source| !source.is_empty())
+    );
+    assert_eq!(detailed.tasks[0].blocked_by_statuses.len(), 1);
+    let detailed_token = detailed.next_page_token.clone();
+    request.detail = pb::ListDetail::Preview as i32;
+    let preview = client.list_tasks(request.clone()).await?.into_inner();
+    assert_eq!(preview.detail, pb::ListDetail::Preview as i32);
+    let mut expected = detailed.tasks;
+    expected[0].source = None;
+    expected[0].blocked_by_statuses.clear();
+    assert_eq!(preview.tasks, expected);
+    assert!(
+        preview.tasks[0]
+            .body
+            .contains("Preserve the body and metadata")
+    );
+    request.page_token = preview.next_page_token;
+    let next = client.list_tasks(request.clone()).await?.into_inner();
+    assert_eq!(next.tasks.len(), 1);
+    assert_eq!(next.tasks[0].id, "FOO-0001");
+    assert!(next.tasks[0].source.is_none());
+    assert_ne!(next.tasks[0].body, "");
+    assert!(next.next_page_token.is_none());
+    request.page_token = detailed_token;
+    let changed = client.list_tasks(request).await.unwrap_err();
+    assert_eq!(changed.code(), Code::InvalidArgument);
+    server.finish().await
+}
+
+#[tokio::test]
 async fn task_index_observes_server_writes_and_refreshes_external_edits() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let id = server.add_project_and_task().await?;

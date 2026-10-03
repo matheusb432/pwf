@@ -34,12 +34,13 @@ impl Default for StatusFilter {
     }
 }
 
-/// Selects summary or metadata-rich task-list output.
+/// Selects summary, complete content, or body-and-metadata task-list output.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ListDetail {
     #[default]
     Summary,
     Detailed,
+    Preview,
 }
 
 impl ListDetail {
@@ -184,7 +185,8 @@ pub struct ListedTask {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedTaskDetails {
-    pub source: String,
+    /// Exact file contents, omitted from preview listings.
+    pub source: Option<String>,
     pub created_at: Option<TaskTimestamp>,
     pub completed_at: Option<TaskTimestamp>,
     pub commits: Option<String>,
