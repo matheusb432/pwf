@@ -6,7 +6,7 @@ use ratatui_textarea::TextArea;
 
 use crate::{
     backend::{Blocker, Outcome, Question, Work},
-    browser::{Browser, SearchMode},
+    browser::{Browser, ProjectScope, SearchMode},
     draft::{Draft, DraftKind, FieldKind, TaskAction, parse_blockers},
     text_input,
 };
@@ -153,9 +153,9 @@ pub(super) struct App {
 }
 
 impl App {
-    pub fn new(project: Option<ProjectId>) -> Self {
+    pub fn new(project_scope: ProjectScope) -> Self {
         Self {
-            browser: Browser::new(project),
+            browser: Browser::new(project_scope),
             draft: None,
             dialog: None,
             confirmation: None,
@@ -170,7 +170,7 @@ impl App {
 
     pub fn load(&self) -> Effect {
         Effect::Work(Work::Load {
-            project: self.browser.project.clone(),
+            scope: self.browser.project_scope.clone(),
         })
     }
 
@@ -240,6 +240,7 @@ impl App {
             draft.fields[draft.focused].paste(text);
         } else if self.browser.searching {
             text_input::paste(&mut self.browser.query, text, false, QUERY_BYTES_MAX);
+            self.browser.selected = 0;
             self.browser.refilter();
         }
     }
@@ -341,8 +342,8 @@ impl App {
 
     fn toggle_search_mode(&mut self) {
         self.browser.search_mode = match self.browser.search_mode {
-            SearchMode::Names => SearchMode::Contents,
-            SearchMode::Contents => SearchMode::Names,
+            SearchMode::Ids => SearchMode::Contents,
+            SearchMode::Contents => SearchMode::Ids,
         };
         self.browser.refilter();
     }
@@ -357,6 +358,7 @@ impl App {
             }
             _ => {
                 text_input::input_key(&mut self.browser.query, key, false, QUERY_BYTES_MAX);
+                self.browser.selected = 0;
                 self.browser.refilter();
             }
         }
@@ -364,7 +366,7 @@ impl App {
     }
 
     fn create(&mut self, purpose: ProjectPurpose) -> Option<Effect> {
-        if let Some(project) = &self.browser.project
+        if let Some(project) = self.browser.project_scope.project()
             && self
                 .browser
                 .projects
@@ -478,10 +480,11 @@ impl App {
             return None;
         }
         if browsing {
-            self.browser.project = selected
+            self.browser.project_scope = selected
                 .checked_sub(1)
                 .and_then(|index| self.browser.projects.get(index))
-                .map(|project| project.id.clone());
+                .map(|project| project.id.clone())
+                .into();
             self.browser.refilter();
             self.loading();
             return Some(self.load());
@@ -518,7 +521,7 @@ impl App {
             }
             KeyCode::F(5) if draft.requires_inspection => {
                 return Some(Effect::Work(Work::Inspect {
-                    project: self.browser.project.clone(),
+                    project: self.browser.project_scope.project().cloned(),
                     task: draft.target().map(|target| target.id.clone()),
                 }));
             }

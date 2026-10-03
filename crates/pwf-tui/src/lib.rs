@@ -19,7 +19,8 @@ use pwf_models::project::ProjectId;
 
 #[derive(Debug, clap::Args)]
 pub struct Arguments {
-    /// Initially show this project's records; omission shows every active project.
+    /// Initially show this project's records; otherwise infer it from the working directory.
+    /// Outside registered task and session directories, show every active project.
     pub project: Option<ProjectId>,
 }
 

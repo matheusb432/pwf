@@ -88,6 +88,20 @@ backend = "cargo:sqlx-cli"
 default-features = "false"
 features = "rustls postgres sqlite sqlx-toml"
 
+[[tools.fzf]]
+version = "0.73.1"
+backend = "aqua:junegunn/fzf"
+
+[tools.fzf."platforms.linux-x64"]
+checksum = "sha256:f3252c2c366bc1700d3c85781ec8c9695998927ac127870eb049ceea2d540f8a"
+url = "https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/junegunn/fzf/releases/assets/429088716"
+
+[tools.fzf."platforms.macos-arm64"]
+checksum = "sha256:d27fd68c04fb9b42f7c73a3f7d38069a74d308e40174f64a072c747213e97286"
+url = "https://github.com/junegunn/fzf/releases/download/v0.73.1/fzf-0.73.1-darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/junegunn/fzf/releases/assets/429088717"
+
 [[tools.just]]
 version = "1.56.0"
 backend = "aqua:casey/just"

@@ -37,6 +37,28 @@ pub(super) struct Project {
 }
 
 #[derive(Clone, Debug)]
+pub(super) enum ProjectScope {
+    All,
+    Project(ProjectId),
+    Directory(PathBuf),
+}
+
+impl ProjectScope {
+    pub fn project(&self) -> Option<&ProjectId> {
+        match self {
+            Self::Project(id) => Some(id),
+            Self::All | Self::Directory(_) => None,
+        }
+    }
+}
+
+impl From<Option<ProjectId>> for ProjectScope {
+    fn from(project: Option<ProjectId>) -> Self {
+        project.map_or(Self::All, Self::Project)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct Record {
     pub id: RecordId,
     pub project: ProjectId,
@@ -47,14 +69,13 @@ pub(super) struct Record {
     pub path: PathBuf,
     pub metadata: Vec<(String, String)>,
     pub diagnostic: Option<String>,
-    name_folded: String,
+    id_folded: String,
     body_folded: String,
 }
 
 impl Record {
     pub fn index(&mut self) {
-        self.name_folded =
-            format!("{} {} {}", self.id.as_str(), self.project, self.title).to_lowercase();
+        self.id_folded = self.id.as_str().to_ascii_lowercase();
         self.body_folded = self.body.to_lowercase();
     }
 
@@ -69,13 +90,13 @@ impl Record {
             path,
             metadata: Vec::new(),
             diagnostic: None,
-            name_folded: String::new(),
+            id_folded: String::new(),
             body_folded: String::new(),
         }
     }
 
     pub fn bytes(&self) -> usize {
-        self.body.len() + self.body_folded.len() + self.name_folded.len() + self.title.len()
+        self.body.len() + self.body_folded.len() + self.id_folded.len() + self.title.len()
     }
 
     pub fn status_label(&self) -> &'static str {
@@ -104,6 +125,7 @@ impl Record {
 }
 
 pub(super) struct Snapshot {
+    pub project: Option<ProjectId>,
     pub projects: Vec<Project>,
     pub records: Vec<Record>,
     pub warnings: Vec<String>,
@@ -188,14 +210,14 @@ impl KindFilter {
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum SearchMode {
     #[default]
-    Names,
+    Ids,
     Contents,
 }
 
 impl SearchMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Names => "names",
+            Self::Ids => "IDs",
             Self::Contents => "saved contents",
         }
     }
@@ -204,7 +226,7 @@ impl SearchMode {
 pub(super) struct Browser {
     pub projects: Vec<Project>,
     pub records: Vec<Record>,
-    pub project: Option<ProjectId>,
+    pub project_scope: ProjectScope,
     pub status: StatusFilter,
     pub kind: KindFilter,
     pub search_mode: SearchMode,
@@ -217,11 +239,11 @@ pub(super) struct Browser {
 }
 
 impl Browser {
-    pub fn new(project: Option<ProjectId>) -> Self {
+    pub fn new(project_scope: ProjectScope) -> Self {
         Self {
             projects: Vec::new(),
             records: Vec::new(),
-            project,
+            project_scope,
             status: StatusFilter::default(),
             kind: KindFilter::default(),
             search_mode: SearchMode::default(),
@@ -236,6 +258,7 @@ impl Browser {
 
     pub fn replace(&mut self, snapshot: Snapshot) {
         let selected = self.current().map(|record| record.id.clone());
+        self.project_scope = snapshot.project.into();
         self.projects = snapshot.projects;
         self.records = snapshot.records;
         self.refilter();
@@ -254,26 +277,38 @@ impl Browser {
         let query = self.query.lines().join("\n");
         let folded = query.to_lowercase();
         let case_sensitive = query.chars().any(char::is_uppercase);
+        let task_id = query.parse::<TaskId>().ok();
         self.visible = self
             .records
             .iter()
             .enumerate()
             .filter(|(_, record)| {
-                self.project.as_ref().is_none_or(|id| &record.project == id)
+                self.project_scope
+                    .project()
+                    .is_none_or(|id| &record.project == id)
                     && self.status.accepts(record.status)
                     && self.kind.accepts(&record.id)
                     && match self.search_mode {
-                        SearchMode::Names if case_sensitive => {
-                            format!("{} {} {}", record.id.as_str(), record.project, record.title)
-                                .contains(&query)
+                        SearchMode::Ids => {
+                            let mut candidate = record.id_folded.bytes();
+                            (task_id.is_none() || record.id.task().is_some())
+                                && folded
+                                    .trim()
+                                    .bytes()
+                                    .all(|character| candidate.any(|next| next == character))
                         }
                         SearchMode::Contents if case_sensitive => record.body.contains(&query),
-                        SearchMode::Names => record.name_folded.contains(&folded),
                         SearchMode::Contents => record.body_folded.contains(&folded),
                     }
             })
             .map(|(index, _)| index)
             .collect();
+        if self.search_mode == SearchMode::Ids
+            && let Some(id) = &task_id
+        {
+            self.visible
+                .sort_by_key(|index| self.records[*index].id.task() != Some(id));
+        }
         self.selected = self.selected.min(self.visible.len().saturating_sub(1));
         self.reset_preview();
     }
@@ -344,8 +379,63 @@ mod tests {
     use crate::test_support::snapshot;
 
     #[test]
+    fn id_search_prioritizes_compact_tasks_and_excludes_record_text() {
+        let mut browser = Browser::new(ProjectScope::All);
+        for raw in ["ALP-0012", "ALP-0021", "ALP-0001", "BET-0009"] {
+            let id: TaskId = raw.parse().unwrap();
+            let mut record = Record::new(
+                RecordId::Task(id.clone()),
+                id.project_id().clone(),
+                "alp1 title-only-needle".into(),
+                PathBuf::from(format!("/tasks/{id}.md")),
+            );
+            record.status = Some(TaskStatus::Active);
+            record.body = "alp1 body-only-needle".into();
+            record.index();
+            browser.records.push(record);
+        }
+        let mut note = Record::new(
+            RecordId::Note(NoteId::try_new("ALP-NOTE-0001").unwrap()),
+            "ALP".parse().unwrap(),
+            "alp1 note title".into(),
+            "/tasks/ALP-NOTE-0001.md".into(),
+        );
+        note.index();
+        browser.records.push(note);
+
+        for query in ["alp1", "AlP1", "alp-1", "alp0001", "ALP-0001", " alp1 "] {
+            browser.query = TextArea::from([query]);
+            browser.refilter();
+            assert_eq!(
+                browser.current().unwrap().id.as_str(),
+                "ALP-0001",
+                "{query}"
+            );
+            assert!(browser.visible.iter().all(|index| {
+                let record = &browser.records[*index];
+                record.project.as_ref() == "ALP" && record.id.task().is_some()
+            }));
+        }
+        browser.query = TextArea::from(["alp1"]);
+        browser.refilter();
+        assert_eq!(browser.visible, [2, 0, 1]);
+        for query in ["title-only-needle", "body-only-needle"] {
+            browser.query = TextArea::from([query]);
+            browser.refilter();
+            assert_eq!(browser.visible, Vec::<usize>::new());
+        }
+        browser.query = TextArea::from(["12"]);
+        browser.refilter();
+        assert_eq!(browser.current().unwrap().id.as_str(), "ALP-0012");
+        browser.kind = KindFilter::Notes;
+        browser.query = TextArea::from(["alp-note"]);
+        browser.refilter();
+        assert_eq!(browser.current().unwrap().id.as_str(), "ALP-NOTE-0001");
+    }
+
+    #[test]
     fn contents_search_and_status_filter_keep_notes_visible() {
-        let mut browser = Browser::new(None);
+        let mut browser = Browser::new(ProjectScope::All);
         browser.replace(snapshot());
         browser.search_mode = SearchMode::Contents;
         browser.query.insert_str("saved markdown");
@@ -361,7 +451,7 @@ mod tests {
 
     #[test]
     fn reference_selection_survives_filters_and_refresh() {
-        let mut browser = Browser::new(None);
+        let mut browser = Browser::new(ProjectScope::All);
         browser.replace(snapshot());
         browser.toggle_reference();
         browser.kind = KindFilter::Notes;

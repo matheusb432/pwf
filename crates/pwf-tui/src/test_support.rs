@@ -7,12 +7,12 @@ use pwf_models::{
 
 use crate::{
     app::App,
-    browser::{Project, Record, RecordId, Snapshot},
+    browser::{Project, ProjectScope, Record, RecordId, Snapshot},
     draft::TaskTarget,
 };
 
 pub(super) fn app() -> App {
-    let mut app = App::new(None);
+    let mut app = App::new(ProjectScope::All);
     app.browser.replace(snapshot());
     app
 }
@@ -37,6 +37,7 @@ pub(super) fn snapshot() -> Snapshot {
     note.body = "# Keyboard notes\nSearch saved Markdown and draft recovery".into();
     note.index();
     Snapshot {
+        project: None,
         projects: vec![Project {
             id: project,
             title: "pwf".into(),

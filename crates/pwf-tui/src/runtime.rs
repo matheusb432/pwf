@@ -1,6 +1,6 @@
 use std::{io, time::Duration};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use crossterm::{
     cursor::Show,
     event::{DisableBracketedPaste, EnableBracketedPaste, Event, EventStream},
@@ -21,6 +21,7 @@ use tokio::{
 use crate::{
     app::{App, Effect, Pending},
     backend::{self, WorkerEvent},
+    browser::ProjectScope,
     editor, references, view,
 };
 
@@ -116,9 +117,15 @@ impl Drop for Runtime {
 }
 
 pub(super) async fn run(project: Option<ProjectId>) -> Result<()> {
+    let scope = match project {
+        Some(id) => ProjectScope::Project(id),
+        None => ProjectScope::Directory(
+            std::env::current_dir().context("Cannot read the working directory.")?,
+        ),
+    };
     let (events, mut incoming) = mpsc::channel(8);
     let mut runtime = Runtime {
-        app: App::new(project),
+        app: App::new(scope),
         terminal: TerminalSession::new()?,
         input: Some(EventStream::new()),
         events,

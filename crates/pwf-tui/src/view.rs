@@ -25,8 +25,8 @@ const HELP: &[&str] = &[
     "BROWSE",
     "↑/↓ or j/k   Move between records",
     "Enter        Open task actions; open note in editor",
-    "/            Search names; Enter keeps the query, Esc leaves search",
-    "f / Ctrl-g   Toggle names and saved contents (Ctrl-g while searching)",
+    "/            Search IDs; Enter keeps the query, Esc leaves search",
+    "f / Ctrl-g   Toggle IDs and saved contents (Ctrl-g while searching)",
     "p · s · Tab  Choose project · cycle status · cycle tasks/notes",
     "PgUp/PgDn    Scroll the Markdown preview",
     "r / F5       Refresh saved contents and reconnect",
@@ -157,8 +157,8 @@ fn render_stack(frame: &mut Frame, area: Rect, app: &mut App) {
         (
             "project",
             app.browser
-                .project
-                .as_ref()
+                .project_scope
+                .project()
                 .map_or_else(|| "all active projects".into(), ToString::to_string),
         ),
         ("status", app.browser.status.label().to_string()),

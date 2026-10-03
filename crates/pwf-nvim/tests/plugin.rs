@@ -261,57 +261,58 @@ fn content_rows_share_the_listing_and_open_the_real_file_at_the_matching_line() 
 }
 
 #[test]
-fn picker_switches_between_names_and_contents_with_ctrl_g() -> anyhow::Result<()> {
+fn picker_searches_task_ids_and_switches_to_contents_with_ctrl_g() -> anyhow::Result<()> {
     let fixture = Fixture::with_server()?;
-    let alpha = fixture.add_project("ALP", "alpha")?;
+    let alpha = fixture.add_project("NAMA", "alpha")?;
     let task = fixture.add_task(&alpha, "title-only-needle")?;
+    for _ in 2..=12 {
+        fixture.add_task(&alpha, "other task")?;
+    }
+    let beta = fixture.add_project("BET", "beta")?;
+    fixture.add_task(&beta, "nama1 title-only-needle")?;
+    fixture.pwf(&["note", "add", "NAMA", "nama1 note-body-needle"])?;
     let task_path = fixture.task_path(&task)?;
     let mut source = fs::read_to_string(&task_path)?;
-    source.push_str("body-only-needle\n");
+    source.push_str("body-only-needle\nnama1 body match\n");
     fs::write(task_path, source)?;
-    let result = fixture.run_lua(&alpha.source, r#"
-        local views, options = {}, nil
-        local listings = setmetatable({}, { __mode = "v" })
-        local listing_count = 0
-        local records = require("pwf.records")
-        local list = records.list
-        records.list = function(query, done)
-          list(query, function(err, listing)
-            listing_count = listing_count + 1
-            listings[listing_count] = listing
-            done(err, listing)
-          end)
-        end
-        package.loaded["fzf-lua"] = {
-          fzf_exec = function(contents, opts)
-            local entries = {}
-            contents(nil, function(rows) if rows then vim.list_extend(entries, rows) end end)
-            options = opts
-            table.insert(views, { entries = entries, prompt = opts.prompt, query = opts.query, title = opts.winopts.title })
-          end,
-        }
-        require("pwf.picker").open()
-        assert(vim.wait(20000, function() return #views == 1 end, 10))
-        assert(options.actions["alt-g"])
-        options.winopts.on_close()
-        options.actions["ctrl-g"].fn({}, { last_query = "needle" })
-        assert(vim.wait(20000, function() return #views == 2 end, 10))
-        options.winopts.on_close()
-        options.actions["ctrl-g"].fn({}, { last_query = "body-only-needle" })
-        assert(vim.wait(20000, function() return #views == 3 end, 10))
-        assert(listing_count == 1)
-        options.winopts.on_close()
-        options.actions["alt-g"].fn({}, { last_query = "title-only-needle" })
-        assert(vim.wait(20000, function() return #views == 4 end, 10))
-        assert(listing_count == 2)
-        options.winopts.on_close()
-        assert(vim.wait(2000, function()
-          collectgarbage("collect")
-          return next(listings) == nil
-        end, 10), "closed pickers retained their listings")
-        return views
-    "#)?;
+    let result = fixture.run_lua(&alpha.source, include_str!("plugin/picker.lua"))?;
     let views = result.as_array().context("missing picker views")?;
+    for query in ["nama1", "NaMa1", "NAMA-0001", "nama-1", "nama0001"] {
+        let matches = views[0]["queries"][query].as_array().unwrap();
+        assert!(
+            matches[0].as_str().unwrap().starts_with("NAMA-0001\t"),
+            "{query}: {matches:?}"
+        );
+        assert!(matches.iter().all(|entry| {
+            let entry = entry.as_str().unwrap();
+            entry.starts_with("NAMA-") && !entry.contains("NOTE")
+        }));
+    }
+    assert_eq!(views[0]["queries"]["nama"].as_array().unwrap().len(), 12);
+    assert!(
+        views[0]["queries"]["nama12"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("NAMA-0012\t")
+    );
+    assert_eq!(views[0]["queries"]["12"].as_array().unwrap().len(), 1);
+    for query in ["title-only-needle", "body-only-needle", "note-body-needle"] {
+        assert_eq!(views[0]["queries"][query], json!([]));
+    }
+    assert_eq!(
+        views[1]["queries"]["body-only-needle"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        views[1]["queries"]["note-body-needle"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(
         views[0]["entries"]
             .to_string()
@@ -328,8 +329,8 @@ fn picker_switches_between_names_and_contents_with_ctrl_g() -> anyhow::Result<()
     assert!(views[1]["prompt"].as_str().unwrap().contains("Content"));
     assert_eq!(views[2]["entries"], views[0]["entries"]);
     assert_eq!(views[2]["query"], "body-only-needle");
-    assert_eq!(views[3]["query"], "title-only-needle");
-    assert!(views[3]["title"].as_str().unwrap().contains("all projects"));
+    assert_eq!(views[3]["query"], "nama1");
+    assert!(views[3]["title"].as_str().unwrap().contains("NAMA"));
     Ok(())
 }
 

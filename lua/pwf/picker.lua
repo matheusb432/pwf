@@ -5,6 +5,15 @@ local function notify_error(err)
   vim.notify("pwf: " .. err, vim.log.levels.ERROR)
 end
 
+local function task_id_search(items)
+  local query = items[1] or ""
+  local project, number = vim.trim(query):match("^([A-Za-z]+)%-?(%d+)$")
+  if project and #project >= 2 and #project <= 4 and #number <= 4 then
+    return ("^%s-%04d$ | %s"):format(project:upper(), tonumber(number), query)
+  end
+  return query
+end
+
 local function previewer(resolve)
   local base = require("fzf-lua.previewer.builtin").buffer_or_file
   local class = base:extend()
@@ -41,7 +50,7 @@ local function open(fzf, state, listing)
       fn = function(_, opts)
         reopen({ mode = state.mode == "names" and "contents" or "names" }, opts, true)
       end,
-      header = state.mode == "names" and "search contents" or "search names",
+      header = state.mode == "names" and "search contents" or "search task IDs",
     },
     ["alt-g"] = {
       fn = function(_, opts)
@@ -52,7 +61,7 @@ local function open(fzf, state, listing)
     ["alt-s"] = {
       fn = function(_, opts)
         vim.ui.select({ "active", "backlog", "done", "cancelled", "all" }, {
-          prompt = "Task status (notes always included):",
+          prompt = "Task status:",
         }, function(status) reopen({ status = status or state.status }, opts) end)
       end,
       header = "task status",
@@ -77,10 +86,14 @@ local function open(fzf, state, listing)
   end
   local content_mode = state.mode == "contents"
   fzf.fzf_exec(function(_, write_lines)
-    if listing then write_lines(listing[state.mode]) end
+    if listing then
+      write_lines(content_mode and listing.contents or vim.tbl_filter(function(entry)
+        return entry:match("^[A-Z]+%-%d+\t") ~= nil
+      end, listing.names))
+    end
     write_lines(nil)
   end, {
-    prompt = content_mode and "Content> " or "Names> ",
+    prompt = content_mode and "Content> " or "Task ID> ",
     query = state.query,
     no_resume = true,
     no_hide = true,
@@ -89,12 +102,24 @@ local function open(fzf, state, listing)
       if what == "query" then opts.last_query = value end
     end,
     winopts = {
-      title = (" pwf · %s · %s tasks + notes · %s "):format(listing.project or "all projects", state.status,
-        content_mode and "contents" or "names"),
+      title = (" pwf · %s · %s tasks%s · %s "):format(listing.project or "all projects", state.status,
+        content_mode and " + notes" or "", content_mode and "contents" or "IDs"),
       -- Actions run after the window closes; release this view after they finish.
       on_close = function() vim.schedule(function() listing = nil end) end,
     },
-    fzf_opts = { ["--no-multi"] = true, ["--delimiter"] = "\t", ["--with-nth"] = "3..", ["--tiebreak"] = "index" },
+    fzf_opts = {
+      ["--no-multi"] = true,
+      ["--delimiter"] = "[\t ]",
+      ["--with-nth"] = "3..",
+      -- fzf applies --nth after --with-nth; the first visible field is the ID.
+      ["--nth"] = not content_mode and "1" or false,
+      ["--ignore-case"] = not content_mode,
+      ["--extended"] = true,
+      ["--tiebreak"] = "index",
+    },
+    keymap = not content_mode and {
+      fzf = { ["start,change"] = "transform-search:" .. fzf.shell.stringify_data(task_id_search, {}, "{q}") },
+    } or nil,
     -- fzf-lua deep-copies previewers; construct the class for this picker instance.
     previewer = { _ctor = function() return previewer(resolve) end },
     actions = actions,

@@ -16,6 +16,7 @@ buf = "1.72.0"
 protoc = "35.1"
 # Headless plugin contracts in `just test-nvim`.
 "aqua:neovim/neovim" = "0.12.4"
+fzf = "0.73.1"
 "cargo-binstall" = "1.21.1"
 "cargo:cargo-llvm-cov" = { version = "0.8.7", depends = [
   "rust",

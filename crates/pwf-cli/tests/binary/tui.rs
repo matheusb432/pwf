@@ -56,17 +56,11 @@ mod terminal {
 
         fn spawn(&self, editor: Option<&std::path::Path>) -> Terminal {
             let mut command = self.database.command();
-            command.args(["tui", "FOO"]).env("TERM", "xterm-256color");
+            command.args(["tui", "FOO"]);
             if let Some(editor) = editor {
                 command.env("VISUAL", format!("'{}'", editor.display()));
             }
-            let mut session = expectrl::Session::spawn(command).unwrap();
-            session.set_expect_timeout(Some(Duration::from_secs(10)));
-            session.get_process_mut().set_window_size(140, 40).unwrap();
-            let mut terminal = Terminal {
-                session,
-                parser: vt100::Parser::new(40, 140, 0),
-            };
+            let mut terminal = Terminal::spawn(command);
             terminal.expect("Loaded 1 saved records");
             terminal
         }
@@ -78,6 +72,17 @@ mod terminal {
     }
 
     impl Terminal {
+        fn spawn(mut command: std::process::Command) -> Self {
+            command.env("TERM", "xterm-256color");
+            let mut session = expectrl::Session::spawn(command).unwrap();
+            session.set_expect_timeout(Some(Duration::from_secs(10)));
+            session.get_process_mut().set_window_size(140, 40).unwrap();
+            Self {
+                session,
+                parser: vt100::Parser::new(40, 140, 0),
+            }
+        }
+
         fn send(&mut self, input: &str) {
             self.session.send(input).unwrap();
         }
@@ -125,6 +130,97 @@ mod terminal {
     }
 
     #[test]
+    fn startup_infers_project_directories_and_respects_explicit_scope() {
+        let fixture = Fixture::new();
+        let root = fixture.directory.path();
+        let other_source = root.join("other-source");
+        let other_tasks = root.join("other-tasks");
+        fs::create_dir_all(&other_source).unwrap();
+        fs::create_dir_all(&other_tasks).unwrap();
+        fs::create_dir_all(root.join("source/nested")).unwrap();
+        fixture.database.add_directory_project(
+            &"BAR".parse().unwrap(),
+            "other-contract",
+            &other_source,
+            &other_tasks,
+        );
+        let output = fixture
+            .database
+            .command()
+            .args(["task", "add", "BAR", "Other project task"])
+            .output()
+            .unwrap();
+        assert_success(&output, "create other project task");
+        for (directory, argument, expected, count) in [
+            ("tasks", None, "FOO", 1),
+            ("source", None, "FOO", 1),
+            ("source/nested", None, "FOO", 1),
+            ("", None, "all active projects", 2),
+            ("source", Some("BAR"), "BAR", 1),
+        ] {
+            let mut command = fixture.database.command();
+            command.arg("tui").current_dir(root.join(directory));
+            if let Some(project) = argument {
+                command.arg(project);
+            }
+            let mut terminal = Terminal::spawn(command);
+            terminal.expect(&format!("Loaded {count} saved records"));
+            terminal.expect(&format!("project  {expected}"));
+            quit(&mut terminal);
+        }
+
+        let mut command = fixture.database.command();
+        command.arg("tui").current_dir(root.join("source"));
+        let mut terminal = Terminal::spawn(command);
+        terminal.expect("Loaded 1 saved records");
+        terminal.send("p");
+        terminal.expect("Project · Enter selects");
+        terminal.send("\r");
+        terminal.expect("Loaded 2 saved records");
+        terminal.expect("project  all active projects");
+        let output = fixture
+            .database
+            .command()
+            .args(["task", "add", "BAR", "New task after opening the TUI"])
+            .output()
+            .unwrap();
+        assert_success(&output, "create task for global refresh");
+        terminal.send("r");
+        terminal.expect("Loaded 3 saved records");
+        terminal.expect("project  all active projects");
+        quit(&mut terminal);
+    }
+
+    #[test]
+    fn compact_task_search_selects_the_exact_id_and_keeps_content_search() {
+        let fixture = Fixture::new();
+        for _ in 2..=12 {
+            let output = fixture
+                .database
+                .command()
+                .args(["task", "add", "FOO", "foo1 unrelated title"])
+                .output()
+                .unwrap();
+            assert_success(&output, "create similar task IDs");
+        }
+        let mut command = fixture.database.command();
+        command.args(["tui", "FOO"]);
+        let mut terminal = Terminal::spawn(command);
+        terminal.expect("Loaded 12 saved records");
+        terminal.send("j/foo1\r\r");
+        terminal.expect("Actions · FOO-0001");
+        terminal.send("\x1b");
+        terminal.expect("enter actions");
+        terminal.send("/\x01\x0bSaved search marker");
+        terminal.expect("No matching records");
+        terminal.send("\x07");
+        terminal.expect("saved contents");
+        terminal.expect("1 visible / 12 loaded");
+        terminal.send("\r");
+        quit(&mut terminal);
+    }
+
+    #[test]
     fn creates_template_task_and_note_keeps_failed_editor_input_and_completes_with_report() {
         let fixture = Fixture::new();
         fixture.database.write_user_config("[task_body]\npreset = 'contract'\n[task_body.presets.contract]\nsections = [{marker='/g', title='Terminal goals', level=3}]\n").unwrap();
@@ -144,7 +240,7 @@ mod terminal {
         let body = task["body"].as_str().unwrap();
         assert!(body.contains("### Terminal goals"));
         assert!(body.contains("Retained after failed editor"));
-        session.send("/Created through TUI\rD");
+        session.send("/foo2\rD");
         session.expect("Complete FOO-0002");
         session.send("Verified terminal workflow\tbase..tip\x13");
         session.expect("Completed FOO-0002");

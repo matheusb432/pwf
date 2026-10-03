@@ -1,4 +1,7 @@
-use std::{io::Read as _, path::PathBuf};
+use std::{
+    io::Read as _,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use pwf_client::{PwfClient, pb};
@@ -9,7 +12,7 @@ use pwf_models::{
 };
 
 use super::WorkerEvent;
-use crate::browser::{Project, Record, RecordId, Snapshot};
+use crate::browser::{Project, ProjectScope, Record, RecordId, Snapshot};
 
 const RECORDS_MAX: usize = 10_000;
 const SNAPSHOT_BYTES_MAX: usize = 64 * 1024 * 1024;
@@ -18,7 +21,7 @@ const PAGE_SIZE: u32 = 256;
 
 pub(super) async fn load(
     client: &PwfClient,
-    scope: Option<ProjectId>,
+    scope: ProjectScope,
     id: u64,
     events: &tokio::sync::mpsc::Sender<WorkerEvent>,
 ) -> Result<Snapshot> {
@@ -33,16 +36,25 @@ pub(super) async fn load(
         projects.len() <= 1024,
         "Project listing exceeds 1024 projects."
     );
-    let mut projects = projects
-        .into_iter()
-        .map(|project| {
-            Ok(Project {
-                id: ProjectId::try_new(project.id)?,
-                title: project.title,
-                tasks_path: expand_home(&project.tasks_path)?,
+    let (mut projects, scope) = tokio::task::spawn_blocking(move || {
+        let scope = match scope {
+            ProjectScope::All => None,
+            ProjectScope::Project(id) => Some(id),
+            ProjectScope::Directory(directory) => infer_project(&projects, &directory)?,
+        };
+        let projects = projects
+            .into_iter()
+            .map(|project| {
+                Ok(Project {
+                    id: ProjectId::try_new(project.id)?,
+                    title: project.title,
+                    tasks_path: expand_home(&project.tasks_path)?,
+                })
             })
-        })
-        .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?;
+        Ok::<_, anyhow::Error>((projects, scope))
+    })
+    .await??;
     projects.sort_by(|left, right| left.id.cmp(&right.id));
     let _ = events
         .send(WorkerEvent::Projects {
@@ -104,10 +116,37 @@ pub(super) async fn load(
     records.extend(notes);
     records.sort_by(|left, right| right.id.as_str().cmp(left.id.as_str()));
     Ok(Snapshot {
+        project: scope,
         projects,
         records,
         warnings,
     })
+}
+
+fn infer_project(projects: &[pb::Project], directory: &Path) -> Result<Option<ProjectId>> {
+    let directory =
+        std::fs::canonicalize(directory).context("Cannot resolve the working directory.")?;
+    let mut closest = None;
+    let mut depth = 0;
+    for project in projects {
+        let source = project
+            .source_value
+            .as_deref()
+            .filter(|_| project.source_kind.as_deref() == Some("directory"));
+        for raw in [Some(project.tasks_path.as_str()), source]
+            .into_iter()
+            .flatten()
+        {
+            let root = expand_home(raw)?;
+            let root = std::fs::canonicalize(&root).unwrap_or(root);
+            let root_depth = root.components().count();
+            if directory.starts_with(&root) && root_depth > depth {
+                closest = Some(ProjectId::try_new(project.id.clone())?);
+                depth = root_depth;
+            }
+        }
+    }
+    Ok(closest)
 }
 
 pub(super) async fn list_tasks(
@@ -201,6 +240,9 @@ fn read_note(path: &std::path::Path) -> Result<String> {
 }
 
 fn expand_home(raw: &str) -> Result<PathBuf> {
+    if raw == "~" {
+        return std::env::home_dir().context("Cannot resolve the home directory.");
+    }
     if let Some(path) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
         return Ok(std::env::home_dir()
             .context("Cannot resolve the home directory.")?
@@ -271,6 +313,58 @@ fn task_record(task: pb::ListedTask) -> Result<Record> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_inference_uses_directory_boundaries_and_the_deepest_root() {
+        let root = tempfile::tempdir().unwrap();
+        for path in [
+            "source/child/src",
+            "source-other",
+            "tasks/child",
+            "tasks-other",
+        ] {
+            std::fs::create_dir_all(root.path().join(path)).unwrap();
+        }
+        let project = |id: &str, tasks: &str, source: &str| pb::Project {
+            id: id.into(),
+            tasks_path: root.path().join(tasks).to_str().unwrap().into(),
+            source_kind: Some("directory".into()),
+            source_value: Some(root.path().join(source).to_str().unwrap().into()),
+            ..Default::default()
+        };
+        let projects = [
+            project("ROOT", "tasks", "source"),
+            project("LEAF", "tasks/child", "source/child"),
+        ];
+        for (directory, expected) in [
+            ("source", Some("ROOT")),
+            ("source/child/src", Some("LEAF")),
+            ("tasks/child", Some("LEAF")),
+            ("source-other", None),
+            ("tasks-other", None),
+        ] {
+            assert_eq!(
+                infer_project(&projects, &root.path().join(directory))
+                    .unwrap()
+                    .map(|id| id.to_string())
+                    .as_deref(),
+                expected,
+            );
+        }
+        #[cfg(unix)]
+        {
+            let alias = root.path().join("linked-source");
+            std::os::unix::fs::symlink(root.path().join("source/child"), &alias).unwrap();
+            assert_eq!(
+                infer_project(&projects, &alias.join("src"))
+                    .unwrap()
+                    .unwrap()
+                    .as_ref(),
+                "LEAF",
+            );
+        }
+    }
+
     #[test]
     fn note_previews_exclude_frontmatter_and_report_read_errors() {
         let directory = tempfile::tempdir().unwrap();

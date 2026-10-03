@@ -14,7 +14,7 @@ pub(super) async fn inspect(
     request_id: u64,
     events: &mpsc::Sender<WorkerEvent>,
 ) -> Result<Outcome> {
-    let snapshot = load(client, project, request_id, events).await?;
+    let snapshot = load(client, project.into(), request_id, events).await?;
     let (revision, current) = match task {
         Some(id) => inspect_task(client, &id)
             .await

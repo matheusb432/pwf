@@ -19,7 +19,7 @@ use task_mutation::submit;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    browser::{Project, Snapshot},
+    browser::{Project, ProjectScope, Snapshot},
     draft::{Draft, Mutation, TaskAction, TaskTarget},
     references,
 };
@@ -28,7 +28,7 @@ pub(super) const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) enum Work {
     Load {
-        project: Option<ProjectId>,
+        scope: ProjectScope,
     },
     NewTask(ProjectId),
     Action {
@@ -145,7 +145,7 @@ async fn perform_work(work: Work, id: u64, events: mpsc::Sender<WorkerEvent>) ->
         id,
     };
     match work {
-        Work::Load { project } => Ok(Outcome::Loaded(load(&client, project, id, &events).await?)),
+        Work::Load { scope } => Ok(Outcome::Loaded(load(&client, scope, id, &events).await?)),
         Work::NewTask(project) => Ok(Outcome::Draft(task_template(&client, project).await?)),
         Work::Action { id, action } => task_action(&client, id, action, prompt).await,
         Work::Blockers { exclude } => {

@@ -5,7 +5,7 @@ local M = {}
 --- @field cmd string[] starts the pwf-nvim child process
 --- @field task_limit integer records a picker lists before offering to load more
 --- @field task_scope "project"|"global" initial project scope
---- @field task_status "active"|"backlog"|"done"|"cancelled"|"all" initial task status filter; notes remain visible
+--- @field task_status "active"|"backlog"|"done"|"cancelled"|"all" initial task status filter; notes remain searchable in contents
 
 --- @type pwf.Config
 local defaults = {
@@ -39,7 +39,7 @@ function M.setup(opts)
   M.config = config
 end
 
---- Searches task and note names, with a toggle for their saved contents.
+--- Searches task IDs, with a toggle for saved task and note contents.
 function M.tasks()
   require("pwf.picker").open()
 end
