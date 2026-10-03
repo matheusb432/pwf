@@ -154,6 +154,11 @@ bench-dag-render update="--baseline local" quick="":
 bench-tui *args: build
     cargo run --quiet --locked --release -p pwf-cli --example tui_benchmark -- {{ args }}
 
+# Compare resident server and CLI latency and RSS on Linux against the local baseline.
+[group('performance')]
+bench-resources *args: build
+    cargo run --quiet --locked --release -p pwf-server --example resource_benchmark -- {{ args }}
+
 # Compare deterministic allocation reports against their local baselines.
 [arg("update", long="update", value="--update", help="Compare and replace the local baselines")]
 [group('performance')]
