@@ -1787,3 +1787,75 @@ fn task_content_lists_keep_machine_formats_clean_and_preserve_file_bytes() {
         "{stderr}"
     );
 }
+
+#[test]
+fn task_content_lists_render_all_pages_without_losing_file_bytes() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let project = directory.path().join("project");
+    let tasks = directory.path().join("tasks");
+    std::fs::create_dir_all(&project)?;
+    std::fs::create_dir_all(&tasks)?;
+    let mut sources = Vec::new();
+    for number in 1..=257 {
+        let metadata = if number == 1 {
+            "created_at: 2026-09-12T01:38:00-03:00\r\neffort: high\r\npriority: highest\r\ntags: [rust, sqlite]\r\ncommits: a..b\r\nblocked_by: [\"[[FOO-0257]]\"]\r\n"
+        } else {
+            ""
+        };
+        let source = format!(
+            "\u{feff}---\r\nid: FOO-{number:04}\r\ntitle: Task {number}\r\nstatus: active\r\n{metadata}---\r\n\r\n  authored body {number}  \r\n"
+        );
+        std::fs::write(tasks.join(format!("FOO-{number:04}.md")), &source)?;
+        sources.push(source);
+    }
+    let fixture = ProjectFixture::new()?;
+    fixture.add(
+        &project_id("FOO")?,
+        "foo",
+        project.to_str().unwrap(),
+        tasks.to_str().unwrap(),
+    )?;
+    let markdown = fixture.run(&["list", "--project", "foo", "--all", "--long=md"])?;
+    crate::support::assert_success(&markdown, "list every Markdown page");
+    assert_eq!(
+        String::from_utf8(markdown.stdout)?,
+        sources.into_iter().rev().collect::<Vec<_>>().join("\n") + "\n"
+    );
+    let json = fixture.run(&["list", "--project", "foo", "--all", "--long=json"])?;
+    crate::support::assert_success(&json, "list every JSON page");
+    let values: Vec<serde_json::Value> = serde_json::from_slice(&json.stdout)?;
+    assert_eq!(values.len(), 257);
+    for (index, value) in values.iter().enumerate() {
+        let number = 257 - index;
+        assert_eq!(value["id"], format!("FOO-{number:04}"));
+        assert_eq!(value["body"], format!("authored body {number}"));
+    }
+    let final_task = values.last().unwrap();
+    assert_eq!(final_task["created"], "2026-09-12");
+    assert_eq!(final_task["effort"], "high");
+    assert_eq!(final_task["priority"], "highest");
+    assert_eq!(final_task["tags"], serde_json::json!(["rust", "sqlite"]));
+    assert_eq!(final_task["commits"], "a..b");
+    assert_eq!(final_task["blocked_by"], serde_json::json!(["FOO-0257"]));
+    let rich = fixture.run(&["list", "--project", "foo", "--all", "--long=rich"])?;
+    crate::support::assert_success(&rich, "list every rich page");
+    let rich = String::from_utf8(rich.stdout)?;
+    assert_eq!(
+        rich.lines().filter(|line| line.starts_with("FOO-")).count(),
+        257
+    );
+    assert!(
+        rich.contains("  authored body 2  \r\n\nFOO-0001 :: Task 1\n\n"),
+        "{rich}"
+    );
+    assert!(rich.contains("FOO-0257 (active)"), "{rich}");
+    std::fs::write(
+        tasks.join("FOO-0001.md"),
+        "---\nid: FOO-0001\ntitle: Invalid final page\nstatus: active\nblocked_by: [not-a-wikilink]\n---\n\nbody\n",
+    )?;
+    let rejected = fixture.run(&["list", "--project", "foo", "--all", "--long=json"])?;
+    assert!(!rejected.status.success());
+    assert_eq!(rejected.stdout, b"");
+    assert!(String::from_utf8(rejected.stderr)?.contains("Malformed blocked_by metadata"));
+    Ok(())
+}
