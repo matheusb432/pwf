@@ -548,9 +548,9 @@ fn collect_project_tasks(
                 .as_ref()
                 .map(pwf_models::project::ProjectSource::value);
             let projected = if query.detail == ListDetail::Preview {
-                task_projection::preview(&record, project.title.clone(), project_path)
+                task_projection::preview(record, project.title.clone(), project_path)
             } else {
-                task_projection::detailed(&record, project.title.clone(), project_path)
+                task_projection::detailed(record, project.title.clone(), project_path)
             };
             projected
                 .map_err(|error| ListTasksError::InvalidTaskProjection(anyhow::Error::new(error)))
@@ -568,16 +568,16 @@ fn priority_matches(task: &ListedTask, wanted: Option<PriorityTier>) -> bool {
     task.priority == Some(wanted)
 }
 
-fn task_order_cmp(order: OrderSpec, a: &ListedTask, b: &ListedTask) -> std::cmp::Ordering {
+fn sort_by_order(tasks: &mut [ListedTask], order: OrderSpec) {
     match order.field {
-        OrderField::Created => {
+        OrderField::Created => tasks.sort_by(|a, b| {
             let ascending = a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id));
             match order.direction {
                 OrderDirection::Asc => ascending,
                 OrderDirection::Desc => ascending.reverse(),
             }
-        }
-        OrderField::Id => {
+        }),
+        OrderField::Id => tasks.sort_by(|a, b| {
             let ascending =
                 a.id.number()
                     .cmp(&b.id.number())
@@ -586,18 +586,24 @@ fn task_order_cmp(order: OrderSpec, a: &ListedTask, b: &ListedTask) -> std::cmp:
                 OrderDirection::Asc => ascending,
                 OrderDirection::Desc => ascending.reverse(),
             }
-        }
-        OrderField::Priority => directed_cmp(order.direction, a.priority.cmp(&b.priority))
-            .then_with(|| id_desc_cmp(a, b)),
+        }),
+        OrderField::Priority => tasks.sort_by(|a, b| {
+            directed_cmp(order.direction, a.priority.cmp(&b.priority))
+                .then_with(|| id_desc_cmp(a, b))
+        }),
         OrderField::Title => {
-            let ascending = a
-                .heading
-                .as_ref()
-                .to_lowercase()
-                .cmp(&b.heading.as_ref().to_lowercase());
-            directed_cmp(order.direction, ascending).then_with(|| id_desc_cmp(a, b))
+            // Stable title sorting preserves descending IDs for equal keys.
+            tasks.sort_unstable_by(id_desc_cmp);
+            match order.direction {
+                OrderDirection::Asc => {
+                    tasks.sort_by_cached_key(|task| task.heading.as_ref().to_lowercase());
+                }
+                OrderDirection::Desc => tasks.sort_by_cached_key(|task| {
+                    std::cmp::Reverse(task.heading.as_ref().to_lowercase())
+                }),
+            }
         }
-        OrderField::Effort => {
+        OrderField::Effort => tasks.sort_by(|a, b| {
             let effort = match (a.effort, b.effort) {
                 (Some(a), Some(b)) => directed_cmp(order.direction, a.cmp(&b)),
                 (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -605,8 +611,8 @@ fn task_order_cmp(order: OrderSpec, a: &ListedTask, b: &ListedTask) -> std::cmp:
                 (None, None) => std::cmp::Ordering::Equal,
             };
             effort.then_with(|| id_desc_cmp(a, b))
-        }
-        OrderField::ProjectId => {
+        }),
+        OrderField::ProjectId => tasks.sort_by(|a, b| {
             let project_cmp = match order.direction {
                 OrderDirection::Asc => a.project.cmp(&b.project),
                 OrderDirection::Desc => b.project.cmp(&a.project),
@@ -614,7 +620,7 @@ fn task_order_cmp(order: OrderSpec, a: &ListedTask, b: &ListedTask) -> std::cmp:
             project_cmp
                 .then_with(|| b.id.number().cmp(&a.id.number()))
                 .then_with(|| b.id.cmp(&a.id))
-        }
+        }),
     }
 }
 
@@ -629,10 +635,6 @@ fn directed_cmp(direction: OrderDirection, ascending: std::cmp::Ordering) -> std
         OrderDirection::Asc => ascending,
         OrderDirection::Desc => ascending.reverse(),
     }
-}
-
-fn sort_by_order(tasks: &mut [ListedTask], order: OrderSpec) {
-    tasks.sort_by(|a, b| task_order_cmp(order, a, b));
 }
 
 fn apply_cap(tasks: Vec<ListedTask>, cap: Option<usize>) -> (Vec<ListedTask>, usize) {

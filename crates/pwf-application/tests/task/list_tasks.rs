@@ -966,6 +966,42 @@ async fn new_sorts_use_tier_order_title_text_and_descending_id_ties() {
 }
 
 #[tokio::test]
+async fn title_sort_preserves_unicode_case_and_descending_id_ties_in_both_directions() {
+    let records = [
+        ("FOO-0001", "Éclair"),
+        ("FOO-0002", "éclair"),
+        ("FOO-0003", "Ωmega"),
+        ("FOO-0004", "ωmega"),
+    ]
+    .into_iter()
+    .map(|(id, title)| TaskRecord {
+        title: title.into(),
+        ..record(id)
+    })
+    .collect();
+    let (store, registry) = foo_store(records);
+    for (order, expected) in [
+        ("title", ["FOO-0002", "FOO-0001", "FOO-0004", "FOO-0003"]),
+        (
+            "title:desc",
+            ["FOO-0004", "FOO-0003", "FOO-0002", "FOO-0001"],
+        ),
+    ] {
+        let result = run(
+            &store,
+            &registry,
+            &ListTasks {
+                order: Some(order.parse().unwrap()),
+                ..default_query()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_ids(&result), expected);
+    }
+}
+
+#[tokio::test]
 async fn all_orders_globally_by_priority_before_applying_an_explicit_cap() {
     let (store, registry) = foo_store(vec![
         TaskRecord {

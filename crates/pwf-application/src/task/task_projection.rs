@@ -53,61 +53,61 @@ pub(in crate::task) enum TaskProjectionError {
 ///
 /// Empty titles fall back to the task ID.
 pub(in crate::task) fn detailed(
-    task: &TaskRecord,
+    task: TaskRecord,
     project: ProjectName,
     project_path: Option<&ProjectSourceValue>,
 ) -> Result<ListedTask, TaskProjectionError> {
-    project_list_entry(task, project, project_path, Some(task.source.clone()))
+    project_list_entry(task, project, project_path, true)
 }
 
 pub(in crate::task) fn preview(
-    task: &TaskRecord,
+    task: TaskRecord,
     project: ProjectName,
     project_path: Option<&ProjectSourceValue>,
 ) -> Result<ListedTask, TaskProjectionError> {
-    project_list_entry(task, project, project_path, None)
+    project_list_entry(task, project, project_path, false)
 }
 
 fn project_list_entry(
-    task: &TaskRecord,
+    task: TaskRecord,
     project: ProjectName,
     project_path: Option<&ProjectSourceValue>,
-    source: Option<String>,
+    include_source: bool,
 ) -> Result<ListedTask, TaskProjectionError> {
-    let body = TaskBody::new(&task.body);
+    let body = TaskBody::new(task.body);
     let flags = derive_flags(&body);
     let heading = task_heading(&task.id, &task.title)?;
     let effort = task_effort(&task.id, task.effort.as_deref())?;
     let priority = task_priority(&task.id, task.priority.as_deref())?;
-    let (blocked_by, blocked_by_issues) = match &task.blocked_by {
+    let (blocked_by, blocked_by_issues) = match task.blocked_by {
         StoredBlockedBy::Absent => (None, Vec::new()),
-        StoredBlockedBy::Valid(blocked_by) => (Some(blocked_by.clone()), Vec::new()),
+        StoredBlockedBy::Valid(blocked_by) => (Some(blocked_by), Vec::new()),
         StoredBlockedBy::Malformed { raw, reason } => (
             None,
             vec![BlockedByIssue::Malformed {
                 path: task.locator.clone(),
-                raw: raw.clone(),
-                reason: reason.clone(),
+                raw,
+                reason,
             }],
         ),
     };
     Ok(ListedTask {
-        id: task.id.clone(),
+        id: task.id,
         project,
         status: task.status,
         heading,
         effort,
         priority,
-        tags: task.tags.clone(),
+        tags: task.tags,
         created: task.created_at.map(TaskTimestamp::date),
         details: Some(ListedTaskDetails {
-            source,
+            source: include_source.then_some(task.source),
             created_at: task.created_at,
             completed_at: task.completed_at,
-            commits: task.commits.clone(),
+            commits: task.commits,
             body,
             project_path: project_path.cloned(),
-            file_path: task.locator.clone(),
+            file_path: task.locator,
             launch: flags,
             blocked_by,
             blocked_by_statuses: Vec::new(),
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn launchable_when_project_path_is_present_and_body_is_real() {
         let enriched = detailed(
-            &record("add startup toggle"),
+            record("add startup toggle"),
             ProjectName::try_new("foo").unwrap(),
             Some(&project_path()),
         )
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn detailed_task_points_to_its_note_file() {
         let enriched = detailed(
-            &record("body"),
+            record("body"),
             ProjectName::try_new("foo").unwrap(),
             Some(&project_path()),
         )
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn placeholder_body_is_not_launchable() {
         let enriched = detailed(
-            &record("TODO"),
+            record("TODO"),
             ProjectName::try_new("foo").unwrap(),
             Some(&project_path()),
         )
@@ -270,7 +270,7 @@ mod tests {
         };
 
         let enriched = detailed(
-            &rec,
+            rec,
             ProjectName::try_new("foo").unwrap(),
             Some(&project_path()),
         )
@@ -289,7 +289,7 @@ mod tests {
         rec.title = "  ".to_string();
         assert_eq!(
             detailed(
-                &rec,
+                rec,
                 ProjectName::try_new("foo").unwrap(),
                 Some(&project_path())
             )
@@ -306,7 +306,7 @@ mod tests {
         rec.effort = Some("extreme".to_string());
 
         assert!(matches!(
-            detailed(&rec, ProjectName::try_new("foo").unwrap(), Some(&project_path())),
+            detailed(rec, ProjectName::try_new("foo").unwrap(), Some(&project_path())),
             Err(TaskProjectionError::Effort { ref value, .. }) if value == "extreme"
         ));
     }
@@ -317,7 +317,7 @@ mod tests {
         rec.priority = Some("urgent".to_string());
 
         assert!(matches!(
-            detailed(&rec, ProjectName::try_new("foo").unwrap(), Some(&project_path())),
+            detailed(rec, ProjectName::try_new("foo").unwrap(), Some(&project_path())),
             Err(TaskProjectionError::Priority { ref value, .. }) if value == "urgent"
         ));
     }
@@ -328,7 +328,7 @@ mod tests {
         rec.title = "x".repeat(201);
 
         let error = detailed(
-            &rec,
+            rec,
             ProjectName::try_new("foo").unwrap(),
             Some(&project_path()),
         )
