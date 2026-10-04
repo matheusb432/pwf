@@ -284,15 +284,18 @@ fn offline_doctor_identifies_invalid_color_and_task_body_settings() {
         .args(["doctor", "--json"])
         .output()
         .unwrap();
+    assert_eq!(output.status.code(), Some(1));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(
         report["checks"].as_array().unwrap().iter().any(|check| {
             check["name"] == "settings"
+                && check["status"] == "fail"
                 && check["detail"].as_str().unwrap().contains("`task_body`")
-                && check["action"]
+                && check["detail"]
                     .as_str()
                     .unwrap()
-                    .starts_with("Correct the setting named in the detail.")
+                    .contains(settings.to_string_lossy().as_ref())
+                && !check["action"].as_str().unwrap().is_empty()
         }),
         "{report}"
     );

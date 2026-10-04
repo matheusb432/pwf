@@ -76,23 +76,20 @@ async fn replace_project_row(
     .fetch_all(&mut **transaction)
     .await
     .map_err(|error| unexpected("updating project", error))?;
-    match rows.len() {
-        1 => rows.into_iter().next().ok_or_else(|| {
-            unexpected(
-                "updating project",
-                std::io::Error::other("project rename returned no row"),
-            )
-        }),
-        0 => Err(RenameProjectError::SourceProjectNotFound {
-            id: command.current_id.clone(),
-        }),
-        count => Err(unexpected(
+    if rows.len() > 1 {
+        let count = rows.len();
+        return Err(unexpected(
             "updating project",
             std::io::Error::other(format!(
                 "project rename updated {count} rows; expected exactly one"
             )),
-        )),
+        ));
     }
+    rows.into_iter()
+        .next()
+        .ok_or_else(|| RenameProjectError::SourceProjectNotFound {
+            id: command.current_id.clone(),
+        })
 }
 
 async fn validate_identity(

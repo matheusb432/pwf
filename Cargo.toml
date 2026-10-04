@@ -3,7 +3,7 @@ members = ["crates/*", "shared/pwf-marker-sections", "xtask"]
 resolver = "3"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 rust-version = "1.98.1"
 repository = "https://github.com/matheusb432/pwf"
 readme = "README.md"
@@ -45,18 +45,18 @@ process-wrap = { version = "9.1.0", default-features = false, features = [
 ] }
 prost = "0.14.4"
 pulldown-cmark = { version = "0.13.4", default-features = false }
-pwf-marker-sections = { path = "shared/pwf-marker-sections", version = "=0.3.0" }
-pwf-application = { path = "crates/pwf-application", version = "=0.3.0" }
-pwf-cli = { path = "crates/pwf-cli", version = "=0.3.0" }
-pwf-server = { path = "crates/pwf-server", version = "=0.3.0" }
-pwf-client = { path = "crates/pwf-client", version = "=0.3.0" }
-pwf-infra = { path = "crates/pwf-infra", version = "=0.3.0" }
-pwf-migrator = { path = "crates/pwf-migrator", version = "=0.3.0" }
-pwf-local-transport = { path = "crates/pwf-local-transport", version = "=0.3.0" }
-pwf-models = { path = "crates/pwf-models", version = "=0.3.0" }
-pwf-nvim = { path = "crates/pwf-nvim", version = "=0.3.0" }
-pwf-tui = { path = "crates/pwf-tui", version = "=0.3.0" }
-pwf-wire = { path = "crates/pwf-wire", version = "=0.3.0" }
+pwf-marker-sections = { path = "shared/pwf-marker-sections", version = "=0.4.0" }
+pwf-application = { path = "crates/pwf-application", version = "=0.4.0" }
+pwf-cli = { path = "crates/pwf-cli", version = "=0.4.0" }
+pwf-server = { path = "crates/pwf-server", version = "=0.4.0" }
+pwf-client = { path = "crates/pwf-client", version = "=0.4.0" }
+pwf-infra = { path = "crates/pwf-infra", version = "=0.4.0" }
+pwf-migrator = { path = "crates/pwf-migrator", version = "=0.4.0" }
+pwf-local-transport = { path = "crates/pwf-local-transport", version = "=0.4.0" }
+pwf-models = { path = "crates/pwf-models", version = "=0.4.0" }
+pwf-nvim = { path = "crates/pwf-nvim", version = "=0.4.0" }
+pwf-tui = { path = "crates/pwf-tui", version = "=0.4.0" }
+pwf-wire = { path = "crates/pwf-wire", version = "=0.4.0" }
 rolling-file = "0.2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

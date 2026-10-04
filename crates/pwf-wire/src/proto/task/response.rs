@@ -160,7 +160,6 @@ impl From<task::TaskRecord> for pb::GetTaskRecordResponse {
     }
 }
 
-/// Encodes a bounded native task DAG into its Protobuf response.
 impl From<task::TaskBodySections> for pb::GetTaskBodySectionsResponse {
     fn from(sections: task::TaskBodySections) -> Self {
         Self {
@@ -184,6 +183,7 @@ impl From<task::TaskBodySections> for pb::GetTaskBodySectionsResponse {
     }
 }
 
+/// Encodes a bounded native task DAG into its Protobuf response.
 #[must_use]
 pub fn get_task_dag_response(graph: task::TaskDag) -> pb::GetTaskDagResponse {
     let (root_id, nodes, edges) = graph.into_parts();

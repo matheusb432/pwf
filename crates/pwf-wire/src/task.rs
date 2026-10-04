@@ -76,7 +76,6 @@ pub struct AddTask {
 /// Requests creation of one task from an authored Markdown file.
 #[derive(Debug)]
 pub struct AddTaskFromFile {
-    /// Destination project ID.
     pub project_id: ProjectId,
     /// Local source file whose contents become the task body.
     pub source_file: PathBuf,

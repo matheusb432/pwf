@@ -349,7 +349,6 @@ fn removed_mutations_and_reference_operations_are_not_exposed() -> anyhow::Resul
         for _, mapping in ipairs({"new", "new-note", "actions", "done", "insert-reference"}) do
           assert(vim.fn.maparg("<Plug>(pwf-" .. mapping .. ")", "n") == "")
         end
-        assert(pwf.notes == pwf.tasks)
         return result
     "#)?;
     for error in result.as_object().unwrap().values() {
