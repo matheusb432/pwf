@@ -64,7 +64,11 @@ message CreateTaskRequest {
   reserved 4;
   reserved "index_section";
   string project_id = 1;
-  string shorthand = 2;
+  // Required: shorthand is parsed with the project preset; body is authored Markdown.
+  oneof content {
+    string shorthand = 2;
+    CreateTaskBody body = 10;
+  }
   reserved 3;
   reserved "structured";
   repeated string blocked_by = 5;
@@ -73,6 +77,12 @@ message CreateTaskRequest {
   optional PriorityTier priority = 8;
   reserved 9;
   reserved "request_id";
+}
+
+message CreateTaskBody {
+  string title = 1;
+  // Verbatim Markdown; an empty value creates an empty body.
+  string body = 2;
 }
 
 message CreateTaskFromFileRequest {
@@ -139,6 +149,13 @@ message AppendTaskBody {
   string body = 2;
 }
 
+message ReplaceTaskBody {
+  // Omitted leaves the title unchanged; a supplied value sets it.
+  optional string title = 1;
+  // Verbatim Markdown; an empty value clears the body.
+  string body = 2;
+}
+
 message TaskContentEdit {
   reserved 1;
   reserved "structured";
@@ -147,6 +164,7 @@ message TaskContentEdit {
     string replace = 3;
     // Sets a nonempty title and leaves the body unchanged.
     string title = 4;
+    ReplaceTaskBody body = 5;
   }
 }
 

@@ -319,7 +319,9 @@ async fn task_body_sections_follow_project_presets_and_shape_created_bodies() ->
         .task()
         .create_task(pb::CreateTaskRequest {
             project_id: "FOO".to_string(),
-            shorthand: "alt task / first goal /c first context / second context".to_string(),
+            content: Some(pb::create_task_request::Content::Shorthand(
+                "alt task / first goal /c first context / second context".to_string(),
+            )),
             ..Default::default()
         })
         .await?;
@@ -525,7 +527,9 @@ impl TestServer {
             .task()
             .create_task(pb::CreateTaskRequest {
                 project_id: "FOO".to_string(),
-                shorthand: format!("{title} / exercise the real server"),
+                content: Some(pb::create_task_request::Content::Shorthand(format!(
+                    "{title} / exercise the real server"
+                ))),
                 blocked_by: Vec::new(),
                 effort: None,
                 tags: Vec::new(),
@@ -752,7 +756,9 @@ async fn v1_create_task_returns_the_committed_task_summary() -> anyhow::Result<(
     )
     .create_task(Request::new(pb::CreateTaskRequest {
         project_id: "FOO".to_string(),
-        shorthand: "task summary / return the committed task summary".to_string(),
+        content: Some(pb::create_task_request::Content::Shorthand(
+            "task summary / return the committed task summary".to_string(),
+        )),
         blocked_by: Vec::new(),
         effort: None,
         tags: Vec::new(),
@@ -772,6 +778,114 @@ async fn v1_create_task_returns_the_committed_task_summary() -> anyhow::Result<(
             }),
         }
     );
+    server.finish().await
+}
+
+#[tokio::test]
+async fn v1_markdown_bodies_bypass_presets_and_preserve_guarded_edit_semantics()
+-> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    server.add_project_and_task().await?;
+    std::fs::write(server.root.path().join("config.toml"), "[task_body\n")?;
+    let mut client =
+        TaskServiceClient::with_interceptor(server.channel().await?, server::ReleaseRequest);
+
+    for content in [
+        None,
+        Some(pb::create_task_request::Content::Body(pb::CreateTaskBody {
+            title: "x".repeat(201),
+            body: "# Rejected body".into(),
+        })),
+    ] {
+        let error = client
+            .create_task(pb::CreateTaskRequest {
+                project_id: "FOO".into(),
+                content,
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+    }
+
+    let body = "\n# Authored /g\r\n\r\nKeep all whitespace.  \r\n\r\n";
+    let created = client
+        .create_task(pb::CreateTaskRequest {
+            project_id: "FOO".into(),
+            content: Some(pb::create_task_request::Content::Body(pb::CreateTaskBody {
+                title: "literal /g title".into(),
+                body: body.into(),
+            })),
+            blocked_by: vec!["FOO-0001".into()],
+            ..Default::default()
+        })
+        .await?
+        .into_inner();
+    assert_eq!(created.id, "FOO-0002");
+    let original = task_record(&server, &created.id).await?;
+    assert_eq!(original.title, "literal /g title");
+    assert_eq!(original.body, body);
+
+    let invalid = client
+        .update_task(pb::UpdateTaskRequest {
+            id: created.id.clone(),
+            content: Some(pb::TaskContentEdit {
+                content: Some(pb::task_content_edit::Content::Body(pb::ReplaceTaskBody {
+                    title: Some("x".repeat(201)),
+                    body: "rejected body".into(),
+                })),
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(invalid.code(), Code::InvalidArgument);
+    assert_eq!(
+        task_record(&server, &created.id).await?.source,
+        original.source
+    );
+
+    let replacement = "---\n\n## Replacement /c\n\nNo final newline";
+    let request = pb::UpdateTaskRequest {
+        id: created.id.clone(),
+        content: Some(pb::TaskContentEdit {
+            content: Some(pb::task_content_edit::Content::Body(pb::ReplaceTaskBody {
+                title: None,
+                body: replacement.into(),
+            })),
+        }),
+        expected_revision: Some(original.revision.clone()),
+        ..Default::default()
+    };
+    client.update_task(request.clone()).await?;
+    let edited = task_record(&server, &created.id).await?;
+    assert_eq!(edited.title, original.title);
+    assert_eq!(edited.body, replacement);
+    let prefix = original.source.strip_suffix(body).unwrap();
+    assert_eq!(edited.source, format!("{prefix}{replacement}"));
+
+    let stale = client.update_task(request).await.unwrap_err();
+    assert_eq!(stale.code(), Code::Aborted);
+    assert_eq!(
+        task_record(&server, &created.id).await?.source,
+        edited.source
+    );
+
+    client
+        .update_task(pb::UpdateTaskRequest {
+            id: created.id.clone(),
+            content: Some(pb::TaskContentEdit {
+                content: Some(pb::task_content_edit::Content::Body(pb::ReplaceTaskBody {
+                    title: Some("renamed /g title".into()),
+                    body: String::new(),
+                })),
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let cleared = task_record(&server, &created.id).await?;
+    assert_eq!(cleared.title, "renamed /g title");
+    assert_eq!(cleared.body, "");
     server.finish().await
 }
 
@@ -845,7 +959,9 @@ async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
         .task()
         .create_task(pb::CreateTaskRequest {
             project_id: "FOO".to_string(),
-            shorthand: "dependent task / exercise the DAG endpoint".to_string(),
+            content: Some(pb::create_task_request::Content::Shorthand(
+                "dependent task / exercise the DAG endpoint".to_string(),
+            )),
             blocked_by: vec![blocker_id],
             effort: None,
             tags: Vec::new(),
@@ -923,7 +1039,9 @@ async fn v1_repeated_requests_apply_each_create_and_append() -> anyhow::Result<(
     let original_id = server.add_project_and_task().await?;
     let create = pb::CreateTaskRequest {
         project_id: "FOO".to_string(),
-        shorthand: "repeated task / exercise independent mutations".to_string(),
+        content: Some(pb::create_task_request::Content::Shorthand(
+            "repeated task / exercise independent mutations".to_string(),
+        )),
         blocked_by: Vec::new(),
         effort: None,
         tags: Vec::new(),
@@ -1304,7 +1422,9 @@ async fn task_list_preview_preserves_paginated_contents_without_duplicate_source
         .task()
         .create_task(pb::CreateTaskRequest {
             project_id: "FOO".into(),
-            shorthand: "Preview target /g Preserve the body and metadata".into(),
+            content: Some(pb::create_task_request::Content::Shorthand(
+                "Preview target /g Preserve the body and metadata".into(),
+            )),
             blocked_by: vec![blocker],
             ..Default::default()
         })
@@ -1535,7 +1655,9 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
         .task()
         .create_task(pb::CreateTaskRequest {
             project_id: "FOO".to_string(),
-            shorthand: "bounded collection".to_string(),
+            content: Some(pb::create_task_request::Content::Shorthand(
+                "bounded collection".to_string(),
+            )),
             blocked_by: Vec::new(),
             effort: None,
             tags: (0..65).map(|index| format!("tag-{index}")).collect(),
@@ -2442,7 +2564,9 @@ async fn project_operations_require_ids_and_report_missing_projects() -> anyhow:
             .task()
             .create_task(pb::CreateTaskRequest {
                 project_id: project_id.to_string(),
-                shorthand: "rejected task / require an ID".to_string(),
+                content: Some(pb::create_task_request::Content::Shorthand(
+                    "rejected task / require an ID".to_string(),
+                )),
                 ..Default::default()
             })
             .await

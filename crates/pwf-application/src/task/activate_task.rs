@@ -72,7 +72,10 @@ pub async fn execute(
             }
             patch.completed_at = NullablePatch::Clear;
             patch.commits = NullablePatch::Clear;
-            patch.body = report.is_some().then_some(body_without_report).into();
+            patch.body = report
+                .is_some()
+                .then_some(body_without_report.into())
+                .into();
         }
     }
     commit_task_writes(

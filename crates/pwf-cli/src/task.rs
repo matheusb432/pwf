@@ -202,7 +202,7 @@ impl StatusChoice {
 
 fn task_title(raw: &str) -> anyhow::Result<(TaskTitle, bool)> {
     if raw.trim().is_empty() {
-        return Err(anyhow::anyhow!("--title cannot be empty."));
+        return Err(anyhow::anyhow!("Task title cannot be empty."));
     }
     let title = TaskTitle::try_new(raw).map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let normalized = title.as_ref() != raw.trim();
@@ -228,7 +228,7 @@ pub struct TaskArguments {
 
 #[derive(Subcommand, Debug)]
 enum TaskCommand {
-    /// Add a pwf task from shorthand text or a Markdown file
+    /// Add a task from shorthand, Markdown, or a Markdown file
     Add(Box<add::Arguments>),
     /// Copy a task into a new active task, optionally in another project.
     Clone(clone::Arguments),
@@ -243,7 +243,7 @@ enum TaskCommand {
     Backlog(backlog::Arguments),
     /// Activate a task; closed tasks require confirmation to clear completion data
     Activate(activate::Arguments),
-    /// Edit an active or backlogged task's body, title, blocked-by tasks, tags, or effort
+    /// Edit an active or backlogged task's content or metadata
     Edit(Box<edit::Arguments>),
     /// Show a task's full content
     #[command(alias = "g")]

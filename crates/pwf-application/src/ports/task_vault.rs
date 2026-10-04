@@ -68,12 +68,12 @@ pub trait TaskGraphSnapshot: Send + Sync {
 
 /// Rendered content receives file framing; verbatim bodies retain every byte.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NewTaskBody {
+pub enum TaskBodyWrite {
     Rendered(String),
     Verbatim(TaskBody),
 }
 
-impl AsRef<str> for NewTaskBody {
+impl AsRef<str> for TaskBodyWrite {
     fn as_ref(&self) -> &str {
         match self {
             Self::Rendered(body) => body,
@@ -82,24 +82,24 @@ impl AsRef<str> for NewTaskBody {
     }
 }
 
-impl From<String> for NewTaskBody {
+impl From<String> for TaskBodyWrite {
     fn from(body: String) -> Self {
         Self::Rendered(body)
     }
 }
 
-impl From<NewTaskBody> for String {
-    fn from(body: NewTaskBody) -> Self {
+impl From<TaskBodyWrite> for String {
+    fn from(body: TaskBodyWrite) -> Self {
         match body {
-            NewTaskBody::Rendered(body) => body,
-            NewTaskBody::Verbatim(body) => body.into_string(),
+            TaskBodyWrite::Rendered(body) => body,
+            TaskBodyWrite::Verbatim(body) => body.into_string(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewTask {
-    pub body: NewTaskBody,
+    pub body: TaskBodyWrite,
     pub title: TaskTitle,
     pub created_at: TaskTimestamp,
     pub blocked_by: Option<BlockedBy>,
@@ -153,7 +153,7 @@ pub struct TaskPatch {
     pub status: SetField<TaskStatus>,
     pub completed_at: NullablePatch<TaskTimestamp>,
     pub commits: NullablePatch<String>,
-    pub body: SetField<String>,
+    pub body: SetField<TaskBodyWrite>,
     pub title: SetField<TaskTitle>,
     pub blocked_by: NullablePatch<BlockedBy>,
     pub effort: NullablePatch<EffortTier>,

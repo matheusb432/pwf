@@ -577,7 +577,7 @@ fn apply_task_patch(record: &mut TaskRecord, patch: TaskPatch) {
     patch.status.apply(&mut record.status);
     apply_nullable_patch(&mut record.completed_at, patch.completed_at);
     apply_nullable_patch(&mut record.commits, patch.commits);
-    patch.body.apply(&mut record.body);
+    patch.body.map(String::from).apply(&mut record.body);
     patch
         .title
         .map(|title| title.to_string())

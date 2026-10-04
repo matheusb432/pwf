@@ -78,7 +78,7 @@ pub(in crate::task) fn close(
     };
     if let Some(report) = report {
         let body = append_report(task_body_region(&record.body), report.as_ref());
-        patch.body = SetField::Set(body);
+        patch.body = SetField::Set(body.into());
     }
     if let Some(commits) = commits {
         patch.commits = NullablePatch::Set(commits.to_string());

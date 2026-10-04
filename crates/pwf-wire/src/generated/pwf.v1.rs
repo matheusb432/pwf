@@ -3025,8 +3025,6 @@ pub struct GetTaskBodySectionsResponse {
 pub struct CreateTaskRequest {
     #[prost(string, tag = "1")]
     pub project_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub shorthand: ::prost::alloc::string::String,
     #[prost(string, repeated, tag = "5")]
     pub blocked_by: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "EffortTier", optional, tag = "6")]
@@ -3035,6 +3033,28 @@ pub struct CreateTaskRequest {
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "PriorityTier", optional, tag = "8")]
     pub priority: ::core::option::Option<i32>,
+    /// Required: shorthand is parsed with the project preset; body is authored Markdown.
+    #[prost(oneof = "create_task_request::Content", tags = "2, 10")]
+    pub content: ::core::option::Option<create_task_request::Content>,
+}
+/// Nested message and enum types in `CreateTaskRequest`.
+pub mod create_task_request {
+    /// Required: shorthand is parsed with the project preset; body is authored Markdown.
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Content {
+        #[prost(string, tag = "2")]
+        Shorthand(::prost::alloc::string::String),
+        #[prost(message, tag = "10")]
+        Body(super::CreateTaskBody),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateTaskBody {
+    #[prost(string, tag = "1")]
+    pub title: ::prost::alloc::string::String,
+    /// Verbatim Markdown; an empty value creates an empty body.
+    #[prost(string, tag = "2")]
+    pub body: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateTaskFromFileRequest {
@@ -3123,8 +3143,17 @@ pub struct AppendTaskBody {
     pub body: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReplaceTaskBody {
+    /// Omitted leaves the title unchanged; a supplied value sets it.
+    #[prost(string, optional, tag = "1")]
+    pub title: ::core::option::Option<::prost::alloc::string::String>,
+    /// Verbatim Markdown; an empty value clears the body.
+    #[prost(string, tag = "2")]
+    pub body: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskContentEdit {
-    #[prost(oneof = "task_content_edit::Content", tags = "2, 3, 4")]
+    #[prost(oneof = "task_content_edit::Content", tags = "2, 3, 4, 5")]
     pub content: ::core::option::Option<task_content_edit::Content>,
 }
 /// Nested message and enum types in `TaskContentEdit`.
@@ -3138,6 +3167,8 @@ pub mod task_content_edit {
         /// Sets a nonempty title and leaves the body unchanged.
         #[prost(string, tag = "4")]
         Title(::prost::alloc::string::String),
+        #[prost(message, tag = "5")]
+        Body(super::ReplaceTaskBody),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

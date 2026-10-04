@@ -9,6 +9,132 @@ use crate::support::{
 };
 
 #[test]
+fn markdown_body_add_preserves_content_and_treats_the_positional_text_as_title() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    let markdown = "---\n\n## Request\r\n\r\nKeep /g literal and `src/main.rs`.  \r\n\r\n| Input | Result |\r\n| --- | --- |\r\n| /c | unchanged |\r\n\r\n```sh\r\nprintf '%s' '$value'\r\n```\r\n\r\n";
+    fixture
+        .database
+        .command()
+        .args(["add", "foo", " \t ", "--body", markdown])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout("");
+    for (number, body) in [(1, markdown), (2, "")] {
+        fixture
+            .database
+            .command()
+            .args([
+                "task",
+                "add",
+                "foo",
+                "API / CLI /g documentation",
+                "--body",
+                body,
+                "--tag",
+                "docs",
+                "--effort",
+                "low",
+                "--priority",
+                "high",
+            ])
+            .assert()
+            .success()
+            .stderr("");
+
+        let id = task_id(&format!("FOO-{number:04}")).unwrap();
+        let task = task_json(&fixture.database, &id).unwrap();
+        assert_eq!(task["title"], "API / CLI /g documentation");
+        assert_eq!(task["tags"], serde_json::json!(["docs"]));
+        assert_eq!(task["effort"], "low");
+        assert_eq!(task["priority"], "high");
+        let path = fixture
+            .database
+            .command_args(&["task", "get", id.as_ref(), "--path"])
+            .success_stdout();
+        let stored = std::fs::read_to_string(path.trim()).unwrap();
+        let (_, stored_body) = stored.split_once("\n---\n").unwrap();
+        assert_eq!(stored_body, body);
+    }
+}
+
+#[test]
+fn markdown_body_edit_preserves_metadata_and_supports_title_edits_and_clearing() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo",
+            "original / old goal",
+            "--tag",
+            "docs",
+            "--effort",
+            "low",
+            "--priority",
+            "high",
+        ])
+        .assert()
+        .success();
+    let path = fixture
+        .database
+        .command_args(&["task", "get", "FOO-0001", "--path"])
+        .success_stdout();
+    let path = path.trim();
+    let before = std::fs::read_to_string(path).unwrap();
+    let (frontmatter, _) = before.split_once("\n---\n").unwrap();
+    let markdown = "---\n\n## Replacement\n\nKeep /g and /c as text.  \n\n";
+
+    fixture
+        .database
+        .command()
+        .args(["task", "edit", "FOO-0001", "--body", markdown])
+        .assert()
+        .success()
+        .stderr("");
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        format!("{frontmatter}\n---\n{markdown}")
+    );
+
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "edit",
+            "FOO-0001",
+            "--body",
+            "# New body without a final newline",
+            "--title",
+            "new /g title",
+        ])
+        .assert()
+        .success()
+        .stderr("");
+    let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
+    assert_eq!(task["title"], "new /g title");
+    assert_eq!(task["body"], "# New body without a final newline");
+    let stored = std::fs::read_to_string(path).unwrap();
+    let (frontmatter, body) = stored.split_once("\n---\n").unwrap();
+    assert_eq!(body, "# New body without a final newline");
+
+    fixture
+        .database
+        .command()
+        .args(["edit", "FOO-0001", "--body", ""])
+        .assert()
+        .success()
+        .stderr("");
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        format!("{frontmatter}\n---\n")
+    );
+}
+
+#[test]
 fn from_file_add_uses_file_stem_as_title_and_preserves_content() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     let source_directory = tempfile::tempdir().unwrap();
@@ -570,7 +696,23 @@ fn invalid_argument_combinations_fail_before_mutation() {
             "ambiguous",
         ],
         vec!["edit", "FOO-0001", "--add-goal", "removed flag"],
-        vec!["edit", "FOO-0001", "--body", "renamed flag"],
+        vec![
+            "edit",
+            "FOO-0001",
+            "--body",
+            "# Markdown",
+            "--append-body",
+            "ambiguous",
+        ],
+        vec![
+            "edit",
+            "FOO-0001",
+            "--body",
+            "# Markdown",
+            "--replace-body",
+            "ambiguous",
+        ],
+        vec!["add", "foo", "--body", "# Missing title"],
         vec!["edit", "FOO-0001", "--effort", "high", "--remove-effort"],
         vec![
             "edit",

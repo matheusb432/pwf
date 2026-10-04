@@ -259,7 +259,7 @@ impl ObsidianStore {
                 .map_err(write_task_file_error)?;
         }
         if let SetField::Set(body) = patch.body.as_ref() {
-            let updated = replace_body(file.source(), body);
+            let updated = replace_body(file, body);
             file.replace_source(updated);
         }
         // Apply commits first to keep it adjacent to completion metadata during a close.

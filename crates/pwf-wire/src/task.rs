@@ -138,6 +138,10 @@ pub struct CompleteTask {
 #[derive(Debug, Clone)]
 pub enum EditTaskContentKind {
     Title(TaskTitle),
+    ReplaceBody {
+        title: SetField<TaskTitle>,
+        body: TaskBody,
+    },
     AppendShorthand {
         title: SetField<TaskTitle>,
         body: String,
@@ -156,6 +160,12 @@ impl EditTaskContent {
     #[must_use]
     pub fn title(title: TaskTitle) -> Self {
         Self(EditTaskContentKind::Title(title))
+    }
+
+    /// Replaces the authored body without parsing shorthand; omission keeps the title.
+    #[must_use]
+    pub fn replace_body(title: SetField<TaskTitle>, body: TaskBody) -> Self {
+        Self(EditTaskContentKind::ReplaceBody { title, body })
     }
 
     /// Creates a non-empty shorthand append.

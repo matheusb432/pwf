@@ -1,8 +1,8 @@
 use clap::{ArgGroup, Args};
 use pwf_client::{
     pb::{
-        self, AppendTaskBody, ClearField, StringCollectionEdit, TaskContentEdit, UpdateTaskRequest,
-        effort_edit, priority_edit, task_content_edit,
+        self, AppendTaskBody, ClearField, ReplaceTaskBody, StringCollectionEdit, TaskContentEdit,
+        UpdateTaskRequest, effort_edit, priority_edit, task_content_edit,
     },
     task::TaskClient,
 };
@@ -22,10 +22,17 @@ use crate::{console::Console, edit::string_collection_edit};
 const EDIT: &str = "task_edit";
 
 #[derive(Args, Debug)]
-#[command(group(ArgGroup::new(EDIT).required(true).multiple(true)))]
+#[command(
+    group(ArgGroup::new(EDIT).required(true).multiple(true)),
+    after_long_help = "Examples:\n  pwf task edit PWF-0001 --body \"$(cat draft.md)\"\n  pwf task edit PWF-0001 --title \"New title\" --body \"# New body\"\n  pwf task edit PWF-0001 --body ''\n  pwf task edit PWF-0001 --append-body \"another goal /d tests pass\""
+)]
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
+    /// Replace only the body with verbatim Markdown; combine with --title to rename. An empty
+    /// value clears the body.
+    #[arg(long, value_name = "MARKDOWN", group = EDIT, conflicts_with_all = ["replace_body", "append_body"], allow_hyphen_values = true)]
+    pub(crate) body: Option<String>,
     /// Replace the title and body with shorthand; leading text becomes the title. See `pwf task
     /// sections`.
     #[arg(long, group = EDIT, conflicts_with_all = ["title", "append_body"])]
@@ -189,7 +196,12 @@ fn content_edit(
     arguments: &Arguments,
     title: Option<&TaskTitle>,
 ) -> anyhow::Result<Option<TaskContentEdit>> {
-    let content = if let Some(body) = arguments.replace_body.as_ref() {
+    let content = if let Some(body) = arguments.body.as_ref() {
+        task_content_edit::Content::Body(ReplaceTaskBody {
+            title: title.map(ToString::to_string),
+            body: body.clone(),
+        })
+    } else if let Some(body) = arguments.replace_body.as_ref() {
         task_content_edit::Content::Replace(body.clone())
     } else if let Some(body) = arguments.append_body.as_ref() {
         if body.trim().is_empty() {

@@ -4,8 +4,8 @@ use pwf_models::{
     project::ProjectId,
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskId, TaskReport, TaskStatus,
-        TaskTags, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskBody, TaskId, TaskReport,
+        TaskStatus, TaskTags, TaskTitle,
         order::{OrderDirection, OrderField, OrderSpec},
     },
 };
@@ -34,16 +34,25 @@ pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTa
 
     let pb::CreateTaskRequest {
         project_id,
-        shorthand,
+        content,
         blocked_by,
         effort,
         tags,
         priority,
     } = request;
 
+    let body = match required("content", content)? {
+        pb::create_task_request::Content::Shorthand(shorthand) => {
+            task::AddTaskBody::from_shorthand(shorthand)
+        }
+        pb::create_task_request::Content::Body(body) => task::AddTaskBody::from_body(
+            TaskTitle::try_new(body.title).map_err(|error| invalid("content.title", error))?,
+            TaskBody::new(body.body),
+        ),
+    };
     Ok(task::AddTask {
         project_id: ProjectId::try_new(project_id).map_err(|error| invalid("project_id", error))?,
-        body: task::AddTaskBody::from_shorthand(shorthand),
+        body,
         blocked_by: blocked_by_values(blocked_by)?,
         effort: effort.map(effort_tier).transpose()?,
         tags: task_tag_values(tags)?,
@@ -289,6 +298,18 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
         }
         pb::task_content_edit::Content::Replace(value) => {
             Ok(task::EditTaskContent::replace_shorthand(value))
+        }
+        pb::task_content_edit::Content::Body(value) => {
+            let title = value
+                .title
+                .map(TaskTitle::try_new)
+                .transpose()
+                .map_err(|error| invalid("content.title", error))?
+                .into();
+            Ok(task::EditTaskContent::replace_body(
+                title,
+                TaskBody::new(value.body),
+            ))
         }
     }
 }

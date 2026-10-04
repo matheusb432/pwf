@@ -12,7 +12,7 @@ use crate::{
     ports::{
         clock::Clock,
         project_store::ProjectStore,
-        task_vault::{NewTask, NewTaskBody, TaskInsertion, TaskVault},
+        task_vault::{NewTask, TaskBodyWrite, TaskInsertion, TaskVault},
         user_settings::{TaskBodyPresetReader, UserSettingsLoadError},
     },
     project::{get_active_project, get_project::GetProjectError},
@@ -77,13 +77,13 @@ pub async fn execute(
     } = command;
     let project = get_active_project::execute(&project_id, project_store).await?;
     let (title, body) = match body {
-        AddTaskBody::Body { title, body } => (title, NewTaskBody::Verbatim(body)),
+        AddTaskBody::Body { title, body } => (title, TaskBodyWrite::Verbatim(body)),
         AddTaskBody::Shorthand(body) => {
             let presets = preset_reader.load_task_body_presets()?;
             let preset = presets.for_project(&project.id);
             (
                 infer_task_title(&body, preset)?,
-                NewTaskBody::Rendered(render_for_creation(&body, preset)),
+                TaskBodyWrite::Rendered(render_for_creation(&body, preset)),
             )
         }
     };

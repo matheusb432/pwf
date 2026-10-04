@@ -24,7 +24,9 @@ use super::{
 };
 use crate::ports::{
     project_store::ProjectStore,
-    task_vault::{NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite},
+    task_vault::{
+        NullablePatch, TaskBodyWrite, TaskMutationError, TaskPatch, TaskVault, TaskWrite,
+    },
     user_settings::{TaskBodyPresetReader, UserSettingsLoadError},
 };
 
@@ -174,18 +176,22 @@ fn prepare_content(
     record: &TaskRecord,
     project_id: &ProjectId,
     preset_reader: &impl TaskBodyPresetReader,
-) -> Result<(SetField<String>, SetField<TaskTitle>), EditTaskError> {
+) -> Result<(SetField<TaskBodyWrite>, SetField<TaskTitle>), EditTaskError> {
     let current_body = task_body_region(&record.body);
     match content.kind() {
         EditTaskContentKind::Title(title) => Ok((SetField::NoAction, SetField::Set(title.clone()))),
+        EditTaskContentKind::ReplaceBody { title, body } => Ok((
+            SetField::Set(TaskBodyWrite::Verbatim(body.clone())),
+            title.clone(),
+        )),
         EditTaskContentKind::AppendShorthand { title, body } => {
             let presets = preset_reader.load_task_body_presets()?;
             Ok((
-                SetField::Set(append_marker_sections(
+                SetField::Set(TaskBodyWrite::Rendered(append_marker_sections(
                     current_body,
                     body,
                     presets.for_project(project_id),
-                )),
+                ))),
                 title.clone(),
             ))
         }
@@ -194,7 +200,9 @@ fn prepare_content(
             let preset = presets.for_project(project_id);
             let title = infer_task_title(body, preset)?;
             Ok((
-                SetField::Set(render_for_replacement(body, preset)),
+                SetField::Set(TaskBodyWrite::Rendered(render_for_replacement(
+                    body, preset,
+                ))),
                 SetField::Set(title),
             ))
         }

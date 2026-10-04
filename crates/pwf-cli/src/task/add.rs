@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
 use pwf_client::{
-    pb::{CreateTaskRequest, EffortTier, PriorityTier},
+    pb::{CreateTaskBody, CreateTaskRequest, EffortTier, PriorityTier, create_task_request},
     task::TaskClient,
 };
 use pwf_models::{
@@ -13,12 +13,16 @@ use pwf_models::{
 use super::{
     EffortChoice, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
-    render::{TaskMutationAction, render_mutation},
+    render::{TITLE_NORMALIZED_NOTICE, TaskMutationAction, render_mutation},
+    task_title,
 };
 use crate::console::Console;
 
 #[derive(Args, Debug)]
-#[command(args_conflicts_with_subcommands = true)]
+#[command(
+    args_conflicts_with_subcommands = true,
+    after_long_help = "Examples:\n  pwf task add PWF \"Fix task rendering / preserve headings /d tests pass\"\n  pwf task add PWF \"Fix task rendering\" --body \"$(cat draft.md)\"\n  pwf task add PWF \"Empty draft\" --body ''"
+)]
 pub struct Arguments {
     #[command(subcommand)]
     command: Option<Command>,
@@ -41,10 +45,19 @@ struct DirectArguments {
         required = true
     )]
     project: Option<ProjectId>,
-    /// Task body shorthand: a title, then items after `/` and section markers. See `pwf task
-    /// sections`.
-    #[arg(value_name = "BODY")]
-    body: Vec<String>,
+    /// Title when --body is supplied; otherwise shorthand: title, then items after `/` and section
+    /// markers. See `pwf task sections`.
+    #[arg(value_name = "TITLE_OR_SHORTHAND")]
+    input: Vec<String>,
+    /// Verbatim Markdown body; positional text supplies the title. An empty value creates an empty
+    /// body.
+    #[arg(
+        long,
+        value_name = "MARKDOWN",
+        requires = "input",
+        allow_hyphen_values = true
+    )]
+    body: Option<String>,
     /// Blocked-by task ID or [[ID]]; repeat or comma-separate for several
     #[arg(short = 'b', long)]
     blocked_by: Vec<BlockedByInput>,
@@ -82,7 +95,7 @@ async fn run_direct(
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
 ) -> Result<String, crate::error::Error> {
-    let shorthand = request_shorthand(arguments)?;
+    let (content, title_normalized) = request_content(arguments)?;
     let project = arguments
         .project
         .as_ref()
@@ -91,7 +104,7 @@ async fn run_direct(
     let result = client
         .create_task(CreateTaskRequest {
             project_id: project_id.to_string(),
-            shorthand,
+            content: Some(content),
             blocked_by: blocked_by_input::collect(&arguments.blocked_by)
                 .map(|values| values.iter().map(ToString::to_string).collect())
                 .unwrap_or_default(),
@@ -113,24 +126,41 @@ async fn run_direct(
         })
         .await;
     match result {
-        Ok(added) => render_mutation(
-            TaskMutationAction::Added,
-            &added.id,
-            added.task.as_ref(),
-            settings,
-            console.color(),
-        )
-        .map_err(Into::into),
+        Ok(added) => {
+            if title_normalized {
+                eprintln!("{TITLE_NORMALIZED_NOTICE}");
+            }
+            render_mutation(
+                TaskMutationAction::Added,
+                &added.id,
+                added.task.as_ref(),
+                settings,
+                console.color(),
+            )
+            .map_err(Into::into)
+        }
         Err(error) => Err(error.into()),
     }
 }
 
-fn request_shorthand(arguments: &DirectArguments) -> anyhow::Result<String> {
-    let body = arguments.body.join(" ");
-    if body.trim().is_empty() {
-        return Err(anyhow::anyhow!(
-            "Use shorthand: pwf task add <project> \"<body>\"\nRun `pwf task sections <project>` to see the section markers."
+fn request_content(
+    arguments: &DirectArguments,
+) -> anyhow::Result<(create_task_request::Content, bool)> {
+    let input = arguments.input.join(" ");
+    if let Some(body) = arguments.body.as_ref() {
+        let (title, normalized) = task_title(&input)?;
+        return Ok((
+            create_task_request::Content::Body(CreateTaskBody {
+                title: title.to_string(),
+                body: body.clone(),
+            }),
+            normalized,
         ));
     }
-    Ok(body)
+    if input.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "Use shorthand: pwf task add <project> \"<shorthand>\"\nOr Markdown: pwf task add <project> \"<title>\" --body \"<markdown>\"\nRun `pwf task sections <project>` to see the section markers."
+        ));
+    }
+    Ok((create_task_request::Content::Shorthand(input), false))
 }
